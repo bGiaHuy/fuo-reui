@@ -1,0 +1,24 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Quiz fixture</title><body><script>(({votes,opts}) => {
+    window.saved = {}; window.calls = 0; window.ocrCalls = 0;
+    window.GM_addStyle = css => {const s=document.createElement('style');s.textContent=css;document.head.append(s)};
+    window.GM_getResourceText = () => '';
+    window.GM_getValue = (key, value) => key === 'deepseekKey' ? (opts.key || '') : value;
+    window.GM_setValue = (key,value) => window.saved[key]=value;
+    window.GM_registerMenuCommand = () => {};
+    window.fetch = async () => ({ok:true,blob:async()=>new Blob(['test'],{type:'image/png'})});
+    window.GM_xmlhttpRequest = args => {window.calls++;setTimeout(()=>args.onload({status:opts.aiError?500:200,responseText:JSON.stringify({choices:[{message:{content:opts.ai || 'AC'}}]})}),opts.aiDelay || 0)};
+    window.Tesseract = {createWorker:async()=>({recognize:async()=>{window.ocrCalls++;await new Promise(r=>setTimeout(r,opts.ocrDelay||0));if(opts.ocrError)throw Error('OCR');return {data:{text:opts.text || 'Select one answer'}}},terminate:async()=>{}})};
+    window.setQuestion = (name, answers) => {
+      document.querySelector('.fancybox__container')?.remove();
+      const root=document.createElement('div');root.className='fancybox__container fancybox-show-sidebar';
+      root.innerHTML='<div class="fancybox__slide is-selected"><div class="fancybox__caption"><h4></h4></div><img class="fancybox-image"></div><aside class="fancybox-sidebar"><div class="fancybox-sidebar-content"><div class="xfmgInfoBlock-title"><h2></h2></div></div></aside>';
+      root.querySelector('h4').textContent=name;root.querySelector('h2').textContent=name;
+      root.querySelector('img').src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+      for(const [i,answer] of answers.entries()){
+        const c=document.createElement('div');c.className='js-comment';c.dataset.author=String(i);
+        c.innerHTML='<div class="comment-body"><div class="bbWrapper"></div></div>';c.querySelector('.bbWrapper').textContent=answer;root.querySelector('.fancybox-sidebar-content').append(c);
+      }
+      document.body.append(root);
+    };
+    window.setQuestion('Q1.png',votes);
+  })({votes:["AC","CA","AC","AB","AB"],opts:{}})</script><script src="/fuo-reui.user.js"></script>

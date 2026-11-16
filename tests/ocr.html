@@ -1,0 +1,9 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Real Tesseract smoke</title><body>
+<script>
+window.GM_addStyle=css=>{const s=document.createElement('style');s.textContent=css;document.head.append(s)};
+window.GM_getResourceText=()=>'';window.GM_getValue=(k,v)=>v;window.GM_setValue=()=>{};window.GM_registerMenuCommand=()=>{};
+const canvas=document.createElement('canvas');canvas.width=1000;canvas.height=240;const ctx=canvas.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,1000,240);ctx.fillStyle='black';ctx.font='40px Arial';ctx.fillText('Select all that apply.',40,70);ctx.fillText('A. One   B. Two   C. Three',40,150);
+document.body.insertAdjacentHTML('beforeend','<div class="fancybox__container fancybox-show-sidebar"><div class="fancybox__slide is-selected"><div class="fancybox__caption"><h4>Q1.png</h4></div><img class="fancybox-image"></div><aside class="fancybox-sidebar"><div class="fancybox-sidebar-content"><div class="xfmgInfoBlock-title"><h2>Q1.png</h2></div></div></aside></div>');document.querySelector('img').src=canvas.toDataURL();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script src="/fuo-reui.user.js"></script>

@@ -12,7 +12,7 @@ async function fixture(page, votes = ['AC','CA','AC','AB','AB'], opts = {}) {
     window.GM_setValue = (key,value) => window.saved[key]=value;
     window.GM_registerMenuCommand = () => {};
     window.fetch = async () => ({ok:true,blob:async()=>new Blob(['test'],{type:'image/png'})});
-    window.GM_xmlhttpRequest = args => {window.calls++;setTimeout(()=>args.onload({status:opts.aiError?500:200,responseText:JSON.stringify({choices:[{message:{content:opts.ai || 'AC'}}]})}),opts.aiDelay || 0)};
+    window.GM_xmlhttpRequest = args => {window.calls++;setTimeout(()=>args.onload({status:opts.aiError?500:200,responseText:JSON.stringify({choices:[{message:{content:opts.aiRaw ?? JSON.stringify({answer:opts.ai || 'AC',explanation:opts.explanation || 'Các phương án này thỏa mãn điều kiện của câu hỏi.'})}}]})}),opts.aiDelay || 0)};
     window.Tesseract = {createWorker:async()=>({recognize:async()=>{window.ocrCalls++;await new Promise(r=>setTimeout(r,opts.ocrDelay||0));if(opts.ocrError)throw Error('OCR');return {data:{text:opts.text || 'Select one answer'}}},terminate:async()=>{}})};
     window.setQuestion = (name, answers) => {
       document.querySelector('.fancybox__container')?.remove();
@@ -64,7 +64,7 @@ test('switch during OCR never paints previous result',async({page})=>{
 test('deduplicates same author and ignores prose',async({page})=>{
  const p=await fixture(page,['B','A','A','không biết']);
  await page.evaluate(()=>{setQuestion('Q2.png',['B','A','A','không biết']);document.querySelectorAll('.js-comment')[2].dataset.author='1'});
- const q=page.locator('.fuo-quiz');await expect(q.locator('strong')).toContainText('Chọn một');await option(q,'A').click();await expect(q).toContainText('chưa có đa số');expect(await page.evaluate(()=>calls)).toBe(0);
+ const q=page.locator('.fuo-quiz');await expect(q.locator('strong')).toContainText('Chọn một');await option(q,'A').click();await expect(q).toContainText('API key');expect(await page.evaluate(()=>calls)).toBe(0);
 });
 test('OCR retry reuses worker after successful classification, reset preserves star',async({page})=>{
  const p=await fixture(page,[],{ocrError:true,key:'test'});await expect(p.getByRole('button',{name:'Thử lại phân loại'})).toBeVisible();
@@ -73,7 +73,7 @@ test('OCR retry reuses worker after successful classification, reset preserves s
 });
 test('AI error retry succeeds with retained multiple selection',async({page})=>{
  const p=await fixture(page,['AC','AB'],{key:'test',aiError:true});await expect(p.locator('strong')).toContainText('Chọn nhiều');await option(p,'A').click();await option(p,'C').click();await p.getByRole('button',{name:'Submit',exact:true}).click();await expect(p).toContainText('HTTP 500');
- await page.evaluate(()=>{GM_xmlhttpRequest=args=>args.onload({status:200,responseText:JSON.stringify({choices:[{message:{content:'AC'}}]})})});
+ await page.evaluate(()=>{GM_xmlhttpRequest=args=>args.onload({status:200,responseText:JSON.stringify({choices:[{message:{content:JSON.stringify({answer:'AC',explanation:'Các lựa chọn này phù hợp.'})}}]})})});
  await p.getByRole('button',{name:'Submit',exact:true}).click();await expect(p).toContainText('Đúng · Nguồn');
 });
 test('loading comments lock answers and do not start OCR',async({page})=>{
@@ -94,4 +94,40 @@ test('toggling selection and revisiting image uses cached OCR',async({page})=>{
 });
 test('final question exports only after successful grading',async({page})=>{
  const p=await fixture(page,['AC']);await page.evaluate(()=>{const a=document.createElement('a');a.href='/Q1.png';a.textContent='Q1.png';document.body.append(a);dispatchEvent(new Event('resize'))});await expect(p.locator('strong')).toContainText('Chọn nhiều');await option(p,'A').click();await page.waitForTimeout(80);expect(await page.evaluate(()=>Object.keys(saved).length)).toBe(0);const download=page.waitForEvent('download');await p.getByRole('button',{name:'Submit',exact:true}).click();await download;await expect(p).toContainText('Đã xuất CSV');expect(await page.evaluate(()=>Object.values(saved)[0].autoExported)).toBe(true);
+});
+
+// Regression: grading and the reference panel must consume the same AI result.
+test('AI grading then reference reuses one answer and explanation after reset',async({page})=>{
+ const p=await fixture(page,[],{key:'test',ai:'A',explanation:'Báo cáo thuộc chức năng báo cáo, không phải xử lý giao dịch.'});
+ await expect(p.locator('strong')).toContainText('Chọn một');await option(p,'B').click();await expect(option(p,'A')).toHaveAttribute('data-mark','right');
+ await expect(p.locator('.fuo-ai-result')).toContainText('Đáp án: A');await expect(p.locator('.fuo-ai-result')).toContainText('Báo cáo thuộc');
+ await p.getByRole('button',{name:'Xem đáp án AI'}).click();expect(await page.evaluate(()=>calls)).toBe(1);
+ await p.getByRole('button',{name:'Làm lại',exact:true}).click();await option(p,'A').click();await expect(p).toContainText('Đúng · Nguồn DeepSeek');expect(await page.evaluate(()=>calls)).toBe(1);
+ expect(await page.evaluate(()=>Object.values(saved)[0].questions['Q1.png'].answer)).toBe('A');
+});
+test('AI reference before multiple Submit shares normalized answer and does not complete early',async({page})=>{
+ const p=await fixture(page,['AC','AB'],{key:'test',ai:'C,A'});await expect(p.locator('strong')).toContainText('Chọn nhiều');
+ await p.getByRole('button',{name:'Xem đáp án AI'}).click();await expect(p.locator('.fuo-ai-result')).toContainText('Đáp án: A,C');expect(await page.evaluate(()=>Object.keys(saved).length)).toBe(0);
+ await option(p,'A').click();await option(p,'C').click();await p.getByRole('button',{name:'Submit',exact:true}).click();await expect(p).toContainText('Đúng · Nguồn DeepSeek');expect(await page.evaluate(()=>calls)).toBe(1);
+});
+for(const conclusion of ['giao dịch không bao gồm những công việc của nhà sản xuất\n-> A','giải thích\nĐáp án: A','giải thích → A'])test('explicit comment conclusion wins without AI: '+conclusion,async({page})=>{
+ const p=await fixture(page,[conclusion]);await expect(p.locator('strong')).toContainText('Chọn một');await option(p,'B').click();await expect(option(p,'A')).toHaveAttribute('data-mark','right');await expect(p).toContainText('Sai · Nguồn 1 bình luận');expect(await page.evaluate(()=>calls+ocrCalls)).toBe(0);
+});
+test('HTML line breaks preserve multiple-answer conclusion and exclude quoted votes',async({page})=>{
+ const p=await fixture(page,['A']);await page.evaluate(()=>{setQuestion('Q2.png',['placeholder']);document.querySelector('.comment-body .bbWrapper').innerHTML='<blockquote class="bbCodeBlock--quote">Đáp án: B</blockquote><p>Lý do chọn:</p><br>-> C,A'});
+ const q=page.locator('.fuo-quiz');await expect(q.locator('strong')).toContainText('Chọn nhiều');await option(q,'A').click();await option(q,'C').click();await q.getByRole('button',{name:'Submit',exact:true}).click();await expect(q).toContainText('Đúng · Nguồn 1 bình luận');expect(await page.evaluate(()=>calls+ocrCalls)).toBe(0);
+});
+test('prose with option letters does not become a comment vote',async({page})=>{
+ const p=await fixture(page,['Có lẽ A hoặc B nhưng mình chưa chắc.'],{key:'test',ai:'A'});await expect(p.locator('strong')).toContainText('Chọn một');expect(await page.evaluate(()=>ocrCalls)).toBe(1);await option(p,'A').click();await expect(p).toContainText('Đúng · Nguồn DeepSeek');
+});
+for(const first of [true,false])test('AI/comment disagreement is explicit; comments retain grading priority, AI first '+first,async({page})=>{
+ const p=await fixture(page,['A'],{key:'test',ai:'C'});await expect(p.locator('strong')).toContainText('Chọn một');
+ if(first){await p.getByRole('button',{name:'Xem đáp án AI'}).click();await expect(p.locator('.fuo-ai-result')).toContainText('Đáp án: C')}
+ await option(p,'A').click();await expect(p).toContainText('Đúng · Nguồn 1 bình luận');
+ if(!first)await p.getByRole('button',{name:'Xem đáp án AI'}).click();
+ await expect(p.locator('.fuo-ai-result')).toContainText('AI chọn C, khác đáp án bình luận A');await expect(option(p,'A')).toHaveAttribute('data-mark','right');expect(await page.evaluate(()=>Object.values(saved)[0].questions['Q1.png'].answer)).toBe('A');
+});
+for(const content of ['C','{}',JSON.stringify({answer:'UNKNOWN',explanation:'Không chắc.'}),JSON.stringify({answer:'A'}),JSON.stringify({answer:'C',explanation:'Đáp án: A\nLý do.'})])test('reject invalid or explicitly contradictory AI result '+content,async({page})=>{
+ const p=await fixture(page,[],{key:'test',aiRaw:content});await expect(p.locator('strong')).toContainText('Chọn một');await option(p,'B').click();await expect(p).toContainText('chưa trả về đáp án và lời giải hợp lệ');await expect(option(p,'B')).toHaveAttribute('aria-pressed','true');await expect(option(p,'A')).toHaveAttribute('data-mark','');expect(await page.evaluate(()=>Object.keys(saved).length)).toBe(0);
+ await page.evaluate(()=>{GM_xmlhttpRequest=args=>args.onload({status:200,responseText:JSON.stringify({choices:[{message:{content:JSON.stringify({answer:'A',explanation:'Lý do phù hợp.'})}}]})})});await option(p,'B').click();await expect(p).toContainText('Sai · Nguồn DeepSeek');await expect(option(p,'A')).toHaveAttribute('data-mark','right');
 });

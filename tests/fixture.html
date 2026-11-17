@@ -6,7 +6,7 @@
     window.GM_setValue = (key,value) => window.saved[key]=value;
     window.GM_registerMenuCommand = () => {};
     window.fetch = async () => ({ok:true,blob:async()=>new Blob(['test'],{type:'image/png'})});
-    window.GM_xmlhttpRequest = args => {window.calls++;setTimeout(()=>args.onload({status:opts.aiError?500:200,responseText:JSON.stringify({choices:[{message:{content:opts.ai || 'AC'}}]})}),opts.aiDelay || 0)};
+    window.GM_xmlhttpRequest = args => {window.calls++;setTimeout(()=>args.onload({status:opts.aiError?500:200,responseText:JSON.stringify({choices:[{message:{content:JSON.stringify({answer:opts.ai || 'AC',explanation:'Các phương án này thỏa mãn điều kiện của câu hỏi.'})}}]})}),opts.aiDelay || 0)};
     window.Tesseract = {createWorker:async()=>({recognize:async()=>{window.ocrCalls++;await new Promise(r=>setTimeout(r,opts.ocrDelay||0));if(opts.ocrError)throw Error('OCR');return {data:{text:opts.text || 'Select one answer'}}},terminate:async()=>{}})};
     window.setQuestion = (name, answers) => {
       document.querySelector('.fancybox__container')?.remove();

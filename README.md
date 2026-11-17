@@ -39,12 +39,31 @@ Open `/tests/fixture.html` for the comment-driven UI, or `/tests/ocr.html` for
 real CDN-loaded Tesseract OCR on a generated image. The latter requires network
 access and is intentionally separate from deterministic regression tests.
 
-Verified: 40 Playwright cases passed; interactive desktop/mobile selection,
-Submit, grading, and no horizontal overflow at 390px; real Tesseract worker/core
-and English/Vietnamese language loading successfully classified a generated
-“Select all that apply” image without JavaScript errors.
+## v1.5.1 consistency fix
 
-Limits: live DeepSeek calls were not exercised. Two inspected FUOverflow threads
-used image filenames such as `R201m_...webp`; the existing script only recognizes
-`Q<number>.<image extension>`, so live end-to-end acceptance on those threads was
-not possible. This release retains that existing filename restriction. Changes are delivered on the `add_features` branch without merging into `main`.
+AI grading and the reference panel share one cached structured result containing
+`answer` and `explanation`. Both action orders and Reset reuse it. Invalid JSON,
+unknown answers, missing explanations, and explicit contradictory answer headings
+remain ungraded and retryable. The request uses DeepSeek's documented
+[JSON output mode](https://api-docs.deepseek.com/guides/json_mode/).
+
+Comment parsing also reads explicit conclusions after prose, including `-> A`,
+`→ A`, and `Đáp án: A`. HTML line breaks are preserved and quoted replies excluded.
+When AI disagrees with the comment winner, the reference panel names both answers
+and makes clear that grading still follows comments.
+
+Verified: 68 Playwright cases passed across desktop/mobile, including shared AI
+cache, rejected malformed/conflicting responses, multiline comment conclusions,
+CSV, and existing OCR/Submit flows. Interactive fixture checks confirmed aligned
+answer/explanation, one AI request across grading/reference/reset, and no horizontal
+overflow at 390px. AI API responses in these checks were mocked.
+
+Live verification on Q37 of `/threads/dbi202-su26-re.7208/` read the actual
+multiline comment and graded B as incorrect against A, with source “1 bình luận”
+and A: 100%. This used an injected script with isolated GM storage shims, without
+changing installed Tampermonkey scripts or persistent practice records. Live
+DeepSeek requests were not exercised. Earlier real Tesseract worker/core smoke
+verification classified a generated “Select all that apply” image successfully.
+
+The existing `Q<number>.<image extension>` filename restriction remains.
+Changes are delivered on `add_features` without merging into `main`.

@@ -12,7 +12,7 @@ async function fixture(page, votes = ['AC','CA','AC','AB','AB'], opts = {}) {
     window.GM_setValue = (key,value) => window.saved[key]=value;
     window.GM_registerMenuCommand = () => {};
     window.fetch = async () => ({ok:true,blob:async()=>new Blob(['test'],{type:'image/png'})});
-    window.GM_xmlhttpRequest = args => {window.calls++;setTimeout(()=>args.onload({status:opts.aiError?500:200,responseText:JSON.stringify({choices:[{message:{content:opts.aiRaw ?? JSON.stringify({answer:opts.ai || 'AC',explanation:opts.explanation || 'Các phương án này thỏa mãn điều kiện của câu hỏi.'})}}]})}),opts.aiDelay || 0)};
+    window.GM_xmlhttpRequest = args => {window.calls++;window.lastAIRequest=JSON.parse(args.data);setTimeout(()=>args.onload({status:opts.aiError?500:200,responseText:JSON.stringify({choices:[{message:{content:opts.aiRaw ?? JSON.stringify({answer:opts.ai || 'AC',explanation:opts.explanation || 'Các phương án này thỏa mãn điều kiện của câu hỏi.'})}}]})}),opts.aiDelay || 0)};
     window.Tesseract = {createWorker:async()=>({recognize:async()=>{window.ocrCalls++;await new Promise(r=>setTimeout(r,opts.ocrDelay||0));if(opts.ocrError)throw Error('OCR');return {data:{text:opts.text || 'Select one answer'}}},terminate:async()=>{}})};
     window.setQuestion = (name, answers) => {
       document.querySelector('.fancybox__container')?.remove();
@@ -97,18 +97,18 @@ test('final question exports only after successful grading',async({page})=>{
 });
 
 // Regression: grading and the reference panel must consume the same AI result.
-test('AI grading then reference reuses one answer and explanation after reset',async({page})=>{
+test('AI grading and reference reuse current selection; reset refreshes explanation',async({page})=>{
  const p=await fixture(page,[],{key:'test',ai:'A',explanation:'Báo cáo thuộc chức năng báo cáo, không phải xử lý giao dịch.'});
  await expect(p.locator('strong')).toContainText('Chọn một');await option(p,'B').click();await expect(option(p,'A')).toHaveAttribute('data-mark','right');
  await expect(p.locator('.fuo-ai-result')).toContainText('Đáp án: A');await expect(p.locator('.fuo-ai-result')).toContainText('Báo cáo thuộc');
  await p.getByRole('button',{name:'Xem đáp án AI'}).click();expect(await page.evaluate(()=>calls)).toBe(1);
- await p.getByRole('button',{name:'Làm lại',exact:true}).click();await option(p,'A').click();await expect(p).toContainText('Đúng · Nguồn DeepSeek');expect(await page.evaluate(()=>calls)).toBe(1);
+ await p.getByRole('button',{name:'Làm lại',exact:true}).click();await option(p,'A').click();await expect(p).toContainText('Đúng · Nguồn DeepSeek');expect(await page.evaluate(()=>calls)).toBe(2);
  expect(await page.evaluate(()=>Object.values(saved)[0].questions['Q1.png'].answer)).toBe('A');
 });
 test('AI reference before multiple Submit shares normalized answer and does not complete early',async({page})=>{
  const p=await fixture(page,['AC','AB'],{key:'test',ai:'C,A'});await expect(p.locator('strong')).toContainText('Chọn nhiều');
  await p.getByRole('button',{name:'Xem đáp án AI'}).click();await expect(p.locator('.fuo-ai-result')).toContainText('Đáp án: A,C');expect(await page.evaluate(()=>Object.keys(saved).length)).toBe(0);
- await option(p,'A').click();await option(p,'C').click();await p.getByRole('button',{name:'Submit',exact:true}).click();await expect(p).toContainText('Đúng · Nguồn DeepSeek');expect(await page.evaluate(()=>calls)).toBe(1);
+ await option(p,'A').click();await option(p,'C').click();await p.getByRole('button',{name:'Submit',exact:true}).click();await expect(p).toContainText('Đúng · Nguồn DeepSeek');expect(await page.evaluate(()=>calls)).toBe(2);
 });
 for(const conclusion of ['giao dịch không bao gồm những công việc của nhà sản xuất\n-> A','giải thích\nĐáp án: A','giải thích → A'])test('explicit comment conclusion wins without AI: '+conclusion,async({page})=>{
  const p=await fixture(page,[conclusion]);await expect(p.locator('strong')).toContainText('Chọn một');await option(p,'B').click();await expect(option(p,'A')).toHaveAttribute('data-mark','right');await expect(p).toContainText('Sai · Nguồn 1 bình luận');expect(await page.evaluate(()=>calls+ocrCalls)).toBe(0);
@@ -130,4 +130,20 @@ for(const first of [true,false])test('AI/comment disagreement is explicit; comme
 for(const content of ['C','{}',JSON.stringify({answer:'UNKNOWN',explanation:'Không chắc.'}),JSON.stringify({answer:'A'}),JSON.stringify({answer:'C',explanation:'Đáp án: A\nLý do.'})])test('reject invalid or explicitly contradictory AI result '+content,async({page})=>{
  const p=await fixture(page,[],{key:'test',aiRaw:content});await expect(p.locator('strong')).toContainText('Chọn một');await option(p,'B').click();await expect(p).toContainText('chưa trả về đáp án và lời giải hợp lệ');await expect(option(p,'B')).toHaveAttribute('aria-pressed','true');await expect(option(p,'A')).toHaveAttribute('data-mark','');expect(await page.evaluate(()=>Object.keys(saved).length)).toBe(0);
  await page.evaluate(()=>{GM_xmlhttpRequest=args=>args.onload({status:200,responseText:JSON.stringify({choices:[{message:{content:JSON.stringify({answer:'A',explanation:'Lý do phù hợp.'})}}]})})});await option(p,'B').click();await expect(p).toContainText('Sai · Nguồn DeepSeek');await expect(option(p,'A')).toHaveAttribute('data-mark','right');
+});
+
+test('AI prompt includes current wrong selection and refreshes after reference or retry',async({page})=>{
+ const p=await fixture(page,[],{key:'test',ai:'A'});
+ await expect(p.locator('strong')).toContainText('Chọn một');
+ await p.getByRole('button',{name:'Xem đáp án AI'}).click();
+ await expect(p.locator('.fuo-ai-result')).toContainText('Đáp án: A');
+ expect(JSON.stringify(await page.evaluate(()=>lastAIRequest.messages))).toContain('Người dùng chưa chọn đáp án.');
+ await option(p,'B').click();await expect(p).toContainText('Sai · Nguồn DeepSeek');
+ let messages=JSON.stringify(await page.evaluate(()=>lastAIRequest.messages));
+ expect(messages).toContain('Lựa chọn hiện tại của người dùng: B.');
+ expect(messages).toContain('vì sao từng phương án họ chọn sai');
+ expect(messages).toContain('phương án đúng còn thiếu');
+ await p.getByRole('button',{name:'Làm lại',exact:true}).click();await option(p,'C').click();await expect(p).toContainText('Sai · Nguồn DeepSeek');
+ expect(JSON.stringify(await page.evaluate(()=>lastAIRequest.messages))).toContain('Lựa chọn hiện tại của người dùng: C.');
+ expect(await page.evaluate(()=>calls)).toBe(3);
 });

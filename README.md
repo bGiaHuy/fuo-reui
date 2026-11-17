@@ -1,5 +1,17 @@
 # FUOverflow luyện đề userscript
 
+## v1.5.2 AI reading interface
+
+AI references now separate the provider, answer badge, explanation paragraphs,
+and comment-disagreement notice. The sidebar scrolls as a whole so long answers
+remain reachable, with a wider desktop reading area and mobile wrapping.
+Button hover and answer reveal effects respect reduced-motion preferences.
+Styling adapts button/badge/separator patterns inspected with shadcn CLI to native
+userscript HTML; React and a build step are not required.
+
+Run `npm ci`, `npx playwright install chromium`, and `npm test` in Codespaces.
+AI calls remain mocked in tests; live forum integration needs a manual check.
+
 Install `fuo-reui.user.js` in Tampermonkey. This workspace is based on
 `bGiaHuy/fuo-reui`, upstream script SHA `82cfaaefb18ccd488bf170fd1f4c3717d7ecac2e`.
 

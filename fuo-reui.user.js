@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FUOverflow — Luyện đề
 // @namespace    fuoverflow-quiz-local
-// @version      1.5.1
+// @version      1.5.2
 // @match        https://fuoverflow.com/threads/*
 // @grant        GM_addStyle
 // @grant        GM_getValue
@@ -122,6 +122,35 @@
     '.fuo-quiz .fuo-ai-result[role=status]{text-align:left;line-height:1.65}.fuo-ai-result .katex{white-space:normal;font-size:1.05em}.fuo-ai-result .katex-display{max-width:100%;overflow-x:auto;overflow-y:hidden;padding:4px 0}.fuo-ai-result .katex-display>.katex{white-space:nowrap}' +
     '.fuo-quiz [role=status]{flex-basis:100%;text-align:center;color:#dbe6f5;min-height:1.4em}'
   );
+
+  // The quiz must scroll with the sidebar, including long AI answers.
+  GM_addStyle(`
+    .fancybox-sidebar:has(> .fuo-quiz:not([hidden])){max-height:100dvh;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+    .fancybox-sidebar:has(> .fuo-quiz:not([hidden])) > .fancybox-sidebar-content{flex:0 0 auto;overflow:visible}
+    .fuo-quiz{box-sizing:border-box;min-width:0;padding:18px;gap:10px;background:#18181b;color:#fafafa;font-weight:500;line-height:1.5;border-top:1px solid #3f3f46}
+    .fuo-quiz strong{font-size:15px;letter-spacing:-.02em}
+    .fuo-quiz button{min-height:40px;border-color:#3f3f46;background:#27272a;border-radius:8px;transition:background-color .16s,border-color .16s,box-shadow .16s}
+    .fuo-quiz button:enabled:hover{background:#3f3f46;border-color:#71717a}
+    .fuo-quiz button:focus-visible{outline:2px solid #a1a1aa;outline-offset:3px;box-shadow:0 0 0 4px #18181b}
+    .fuo-quiz button[aria-pressed=true]{background:#164e63;border-color:#67e8f9}
+    .fuo-quiz button[data-mark=right]{background:#12452f;border-color:#86efac;color:#bbf7d0}
+    .fuo-quiz button[data-mark=wrong]{background:#68252c;border-color:#fca5a5;color:#fee2e2}
+    .fuo-quiz .fuo-ai-trigger{background:#fafafa;color:#18181b;border-color:#fafafa}
+    .fuo-quiz .fuo-ai-trigger:enabled:hover{background:#e4e4e7;color:#18181b}
+    .fuo-quiz .fuo-ai-result{box-sizing:border-box;width:100%;padding:18px;background:#202023;border:1px solid #3f3f46;border-radius:12px;white-space:normal;animation:fuo-reveal .2s ease-out}
+    .fuo-quiz .fuo-ai-result[role=status]{font-size:15px;line-height:1.8;color:#e4e4e7}
+    .fuo-ai-heading{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding-bottom:14px;margin-bottom:16px;border-bottom:1px solid #3f3f46;font-size:12px;line-height:1.5;color:#a1a1aa}
+    .fuo-ai-provider{font-weight:650;color:#fafafa;font-size:14px}
+    .fuo-ai-answer{display:block;width:fit-content;margin:0 0 18px;padding:6px 12px;border:1px solid #155e75;border-radius:6px;background:#083344;color:#a5f3fc;font-weight:650}
+    .fuo-ai-result p{margin:0 0 16px;white-space:pre-wrap;overflow-wrap:anywhere}
+    .fuo-ai-result p:last-child{margin-bottom:0}
+    .fuo-ai-note{border-left:2px solid #fbbf24;padding-left:12px;color:#fde68a}
+    .fuo-ai-result:focus-visible{outline:2px solid #a1a1aa;outline-offset:2px}
+    @media(min-width:768px){.fancybox-show-sidebar .fancybox-sidebar:has(> .fuo-quiz:not([hidden])){width:420px;max-width:45vw}}
+    @media(max-width:480px){.fuo-quiz{padding:12px}.fuo-quiz .fuo-ai-result{padding:14px}}
+    @keyframes fuo-reveal{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+    @media(prefers-reduced-motion:reduce){.fuo-quiz button{transition:none}.fuo-quiz .fuo-ai-result{animation:none}}
+  `);
 
   GM_registerMenuCommand('Cài / xóa DeepSeek API key', () => {
     const key = prompt('Nhập DeepSeek API key mới. Để trống để xóa. Script gửi ảnh câu hỏi đến DeepSeek khi chấm bằng AI hoặc khi bấm Xem đáp án AI.');
@@ -367,10 +396,13 @@
       render();
     };
     const ai = document.createElement('button');
+    ai.className = 'fuo-ai-trigger';
     ai.type = 'button';
     ai.textContent = 'Xem đáp án AI';
     const aiResult = document.createElement('div');
     aiResult.className = 'fuo-ai-result';
+    aiResult.tabIndex = 0;
+    aiResult.setAttribute('aria-label', 'Lời giải AI');
     aiResult.setAttribute('role', 'status');
     aiResult.hidden = true;
     const submit = document.createElement('button');
@@ -465,7 +497,38 @@
       const aiText = (state.aiText || '') + (state.aiText && disagreement ? disagreement : '');
       if (aiResult.dataset.source !== aiText) {
         aiResult.dataset.source = aiText;
-        aiResult.textContent = aiText;
+        aiResult.replaceChildren();
+        aiResult.setAttribute('aria-busy', String(Boolean(state.aiBusy)));
+        if (state.aiSolution && !state.aiBusy && state.aiText === aiSolutionText(state.aiSolution)) {
+          const heading = document.createElement('div');
+          heading.className = 'fuo-ai-heading';
+          const provider = document.createElement('span');
+          provider.className = 'fuo-ai-provider';
+          provider.textContent = 'DeepSeek';
+          const reference = document.createElement('span');
+          reference.textContent = 'đáp án tham khảo';
+          heading.append(provider, reference);
+          const answer = document.createElement('div');
+          answer.className = 'fuo-ai-answer';
+          answer.textContent = 'Đáp án: ' + [...state.aiSolution.answer].join(',');
+          aiResult.append(heading, answer);
+          const paragraphs = state.aiSolution.explanation.split(/\n+|(?=Phương án [A-H]\s)/u).filter(text => text.trim());
+          for (const text of paragraphs) {
+            const paragraph = document.createElement('p');
+            paragraph.textContent = text.trim();
+            aiResult.append(paragraph);
+          }
+          if (disagreement) {
+            const note = document.createElement('p');
+            note.className = 'fuo-ai-note';
+            note.textContent = disagreement.trim();
+            aiResult.append(note);
+          }
+        } else {
+          const message = document.createElement('p');
+          message.textContent = aiText;
+          aiResult.append(message);
+        }
         if (aiText && typeof renderMathInElement === 'function') {
           renderMathInElement(aiResult, {
             delimiters: [

@@ -32,6 +32,24 @@ async function fixture(page, votes = ['AC','CA','AC','AB','AB'], opts = {}) {
   return page.locator('.fuo-quiz');
 }
 const option=(panel,letter)=>panel.locator('.fuo-options button').filter({hasText:new RegExp('^'+letter+'(?: |$)')});
+test('long AI explanations stay structured and reachable in a fixed sidebar',async({page},testInfo)=>{
+ const explanation='Trong biểu đồ ER, hình chữ nhật kép biểu diễn thực thể yếu. '+ 'Phương án B sai vì thuộc tính đa trị dùng hình elip kép. '.repeat(35)+'\nKết luận: chọn A.';
+ const p=await fixture(page,['A'],{key:'test',ai:'A',explanation});
+ await page.addStyleTag({content:'.fancybox-sidebar{position:fixed;right:0;top:0;width:320px;height:100dvh}.fancybox-sidebar-content{min-height:80px}'});
+ await p.getByRole('button',{name:'Xem đáp án AI'}).click();
+ const result=p.locator('.fuo-ai-result');
+ await expect(result.locator('.fuo-ai-answer')).toHaveText('Đáp án: A');
+ await expect(result.locator('p').last()).toHaveText('Kết luận: chọn A.');
+ expect(await result.locator('p').count()).toBeGreaterThan(2);
+ await page.screenshot({path:testInfo.outputPath('ai-redesign-top.png')});
+ const sidebar=page.locator('.fancybox-sidebar');
+ await sidebar.evaluate(el=>{el.scrollTop=el.scrollHeight});
+ await expect(result.locator('p').last()).toBeInViewport();
+ expect(await sidebar.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await expect(result).toHaveCSS('animation-name','none');
+ await page.screenshot({path:testInfo.outputPath('ai-redesign.png')});
+});
 test('multiple waits for Submit, uses plurality and displays percentages, saves full set',async({page})=>{
  const p=await fixture(page);await expect(p.locator('strong')).toContainText('Chọn nhiều');
  await expect(p.getByRole('button',{name:'Submit',exact:true})).toBeDisabled();

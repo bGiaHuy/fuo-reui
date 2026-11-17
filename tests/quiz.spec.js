@@ -41,6 +41,7 @@ test('long AI explanations stay structured and reachable in a fixed sidebar',asy
  await expect(result.locator('.fuo-ai-answer')).toHaveText('Đáp án: A');
  await expect(result.locator('p').last()).toHaveText('Kết luận: chọn A.');
  expect(await result.locator('p').count()).toBeGreaterThan(2);
+ await result.evaluate(el=>Promise.all(el.getAnimations().map(animation=>animation.finished)));
  await page.screenshot({path:testInfo.outputPath('ai-redesign-top.png')});
  const sidebar=page.locator('.fancybox-sidebar');
  await sidebar.evaluate(el=>{el.scrollTop=el.scrollHeight});

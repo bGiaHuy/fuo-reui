@@ -23,7 +23,7 @@ Khi cập nhật, mở lại file trên main và xác nhận cập nhật trong 
 5. Với **Chọn nhiều đáp án**, bấm các phương án cần chọn, bấm lại để bỏ chọn, rồi bấm **Submit**. Chỉ đúng khi chọn khớp toàn bộ tập đáp án.
 6. Đọc kết quả **Đúng / Sai** cùng nguồn đáp án; chuyển sang ảnh tiếp theo trong trình xem ảnh để tiếp tục.
 
-**Điều kiện nhận diện trên main:** tiêu đề ảnh trong trình xem phải có dạng `Q1.png`, `Q27.webp`, `Q12.jpg`… Script nhận tên `Q` + số + phần mở rộng `webp`, `jpg`, `jpeg`, `png`, `gif` (không phân biệt hoa/thường). Ảnh có hậu tố như `Q27_91_20250804144948.webp` chưa được nhận diện bởi bản main hiện tại.
+**Nhận diện ảnh từ bản 1.5.3:** hỗ trợ tên ảnh bất kỳ như `Q1.png`, `Q27_91_20250804144948.webp`, `CEA201_SP26_FE (7).webp`. Script đọc tên từ dữ liệu gallery, nhận link ảnh có tham số ký thay đổi và caption ở ngoài slide trên mobile.
 
 ### Các nút trong bảng
 
@@ -128,3 +128,17 @@ python3 -m http.server 8765
 - Kiểm tra bản userscript đã cài trên FUOverflow riêng khi thay đổi tích hợp Fancybox hoặc API.
 
 Phụ thuộc chạy trong trình duyệt được khai báo ở metadata userscript: Tesseract.js 5.1.1 và KaTeX 0.19.1. Playwright được ghim trong `package-lock.json`.
+
+
+## v1.5.3 dynamic attachment detection
+
+Question filenames no longer need a Q prefix: names such as
+`CEA201_SP26_FE (7).webp` are accepted. Catalog discovery reads gallery caption
+metadata and image alt text, groups attachments by `data-fancybox`, and matches
+signed attachment URLs without their query/hash. Numbered Q filenames and
+parenthesized numbers retain numeric completion order; other filenames use gallery
+order. Existing full-filename practice keys are preserved.
+
+Verified: 88 Playwright desktop/mobile tests passed, including arbitrary filenames
+and changing URL signatures, plus captions moved outside the slide on mobile. Live CEA201 gallery UI was checked with injected GM
+storage shims and mocked OCR; no installed userscript update or live AI call.

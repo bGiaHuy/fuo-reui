@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FUOverflow — Luyện đề
 // @namespace    fuoverflow-quiz-local
-// @version      1.5.2
+// @version      1.5.3
 // @match        https://fuoverflow.com/threads/*
 // @grant        GM_addStyle
 // @grant        GM_getValue
@@ -40,27 +40,44 @@
       || document.title.replace(/\s*\|\s*FuOverflow.*$/i, '').trim() || 'FUOverflow';
   }
 
+  // Attachment filenames are stable; signed URLs and thumbnail URLs are not.
+  const questionImage = /^[^<>/\\]+\.(?:webp|jpe?g|png|gif|avif)$/i;
+
+  function attachmentTitle(link) {
+    const caption = document.createElement('template');
+    caption.innerHTML = link.getAttribute('data-caption') || '';
+    const values = [caption.content.querySelector('h4')?.textContent,
+      link.querySelector('img')?.alt, link.getAttribute('title'), link.textContent];
+    for (const value of values) {
+      const title = value?.trim();
+      if (questionImage.test(title || '')) return title;
+    }
+    return null;
+  }
+
+  function stableImageURL(value) {
+    try { const url = new URL(value, location.href); return url.origin + url.pathname; }
+    catch { return ''; }
+  }
+
   function discoverQuestions(target) {
-    // Read original attachment links, not just Fancybox's few virtual slides.
     const links = [...document.querySelectorAll('a[href]')].filter(a => !a.closest('.fancybox__container'));
-    const imageURL = target?.image?.src;
-    const owner = links.find(a => a.href === imageURL)?.closest('.bbWrapper');
-    const candidates = owner ? [...owner.querySelectorAll('a[href]')] : links;
+    const source = links.find(a => stableImageURL(a.href) === stableImageURL(target?.image?.src))
+      || links.find(a => attachmentTitle(a) === target?.title);
+    // Gallery attachments can live outside .bbWrapper.
+    const group = source?.getAttribute('data-fancybox');
+    const owner = source?.closest('.bbWrapper, .message');
+    const candidates = group ? links.filter(a => a.getAttribute('data-fancybox') === group)
+      : owner ? [...owner.querySelectorAll('a[href]')] : links;
     const found = new Map();
     for (const a of candidates) {
-      const values = [a.getAttribute('data-caption'), a.getAttribute('title'),
-        a.querySelector('img')?.alt, a.textContent, a.href];
-      for (const value of values) {
-        let text = value || '';
-        try { text = decodeURIComponent(text); } catch {}
-        const match = text.match(/\b(Q\d+\.(?:webp|jpe?g|png|gif))(?=$|[^a-z0-9])/i);
-        if (!match) continue;
-        const title = match[1];
-        found.set(title.toLowerCase(), { title, url: a.href, number: Number(title.match(/\d+/)[0]) });
-        break;
-      }
+      const title = attachmentTitle(a);
+      if (!title) continue;
+      // Arbitrary names follow gallery order; numbered question names keep numeric order.
+      const number = title.match(/^Q(\d+)/i)?.[1] || title.match(/\((\d+)\)\.[^.]+$/)?.[1];
+      found.set(title.toLowerCase(), { title, url: a.href, number: number ? Number(number) : found.size + 1 });
     }
-    if (found.size) catalog = found;
+    catalog = found;
   }
 
   function csvCell(value) {
@@ -278,13 +295,18 @@
     return task;
   }
 
-  const questionImage = /^Q\d+\.(?:webp|jpe?g|png|gif)$/i;
-
   function currentQuestion(root) {
     const slide = root.querySelector('.fancybox__slide.is-selected');
-    const title = slide?.querySelector('.fancybox__caption h4')?.textContent.trim();
+    const image = slide?.querySelector('img.fancybox-image');
+    if (!image) return null;
+    const source = [...document.querySelectorAll('a[href]')].find(a =>
+      !a.closest('.fancybox__container') && stableImageURL(a.href) === stableImageURL(image.src));
+    // Compact Fancybox moves the caption outside the selected slide.
+    const title = slide.querySelector('.fancybox__caption h4')?.textContent.trim()
+      || (source && attachmentTitle(source))
+      || root.querySelector('.fancybox__caption h4')?.textContent.trim();
     if (!questionImage.test(title ?? '')) return null;
-    return { title, image: slide.querySelector('img.fancybox-image') };
+    return { title, image };
   }
 
   function readVotes(sidebar) {
@@ -686,8 +708,9 @@
     });
   }
   new MutationObserver(schedule).observe(document, {
-    subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'src']
+    subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'src', 'href', 'data-caption', 'alt']
   });
   window.addEventListener('resize', schedule);
   schedule();
 })();
+

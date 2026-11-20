@@ -166,3 +166,46 @@ test('AI prompt includes current wrong selection and refreshes after reference o
  expect(JSON.stringify(await page.evaluate(()=>lastAIRequest.messages))).toContain('Lựa chọn hiện tại của người dùng: C.');
  expect(await page.evaluate(()=>calls)).toBe(3);
 });
+
+
+for (const name of ['Q27_91_20250804144948.webp', 'q2-scan_123.JPEG']) test('suffixed filename grades, persists and completes catalog: '+name, async({page})=>{
+ await fixture(page,['A']);
+ await page.evaluate(name=>{
+   const wrapper=document.createElement('div');wrapper.className='bbWrapper';
+   for(const filename of ['Q1.png',name]){
+     const a=document.createElement('a');a.href='/'+filename;
+     const img=document.createElement('img');img.alt=filename;a.append(img);wrapper.append(a);
+   }
+   document.body.append(wrapper);setQuestion(name,['A']);
+ },name);
+ const p=page.locator('.fuo-quiz');await expect(p).toBeVisible();await expect(p.locator('strong')).toContainText('Chọn một');
+ await p.getByRole('button',{name:'☆ Đánh dấu',exact:true}).click();
+ const download=page.waitForEvent('download');await option(p,'A').click();await download;
+ await expect(p).toContainText('Đúng · Nguồn 1 bình luận');await expect(p).toContainText('Đã xuất CSV');
+ expect(await page.evaluate(name=>Object.values(saved)[0].questions[name].selected,name)).toBe('A');
+ await page.evaluate(()=>setQuestion('Q1.png',['B']));await expect(page.locator('.fuo-quiz strong')).toHaveText('Q1 · Chọn một đáp án');
+ await page.evaluate(name=>setQuestion(name,['A']),name);await expect(page.locator('.fuo-quiz')).toContainText('Đúng · Nguồn');
+});
+for(const name of ['holiday','Q27_notes.txt','Q27.webp.exe']) test('non-question filename stays hidden: '+name,async({page})=>{
+ await fixture(page,['A']);await page.evaluate(name=>setQuestion(name,['A']),name);await expect(page.locator('.fuo-quiz')).toBeHidden();
+});
+
+for (const name of ['CEA201_SP26_FE (7).webp','Screenshot 2026-11-20.png']) test('gallery metadata handles arbitrary filenames and signed URLs: '+name,async({page})=>{
+ await fixture(page,['A']);
+ await page.evaluate(name=>{
+   const a=document.createElement('a');a.href='/attachments/opaque.123/?signature=new';a.dataset.fancybox='exam';a.dataset.caption='<h4>'+name+'</h4>';
+   document.body.append(a);setQuestion(name,['A']);document.querySelector('img.fancybox-image').src='/attachments/opaque.123/?signature=old';
+ },name);
+ const p=page.locator('.fuo-quiz');await expect(p).toBeVisible();await expect(p.locator('strong')).toContainText('Chọn một');
+ const download=page.waitForEvent('download');await option(p,'A').click();await download;
+ await expect(p).toContainText('Đã xuất CSV');expect(await page.evaluate(name=>Object.values(saved)[0].questions[name].selected,name)).toBe('A');
+});
+
+test('compact gallery keeps recognizing caption outside the selected slide',async({page})=>{
+ await fixture(page,['A']);await page.evaluate(()=>{
+   setQuestion('CEA201_SP26_FE (7).webp',['A']);
+   const root=document.querySelector('.fancybox__container');root.append(root.querySelector('.fancybox__caption'));
+ });
+ const p=page.locator('.fuo-quiz');await expect(p).toBeVisible();await expect(p.locator('strong')).toContainText('CEA201_SP26_FE (7)');
+ await option(p,'A').click();await expect(p).toContainText('Đúng · Nguồn');
+});

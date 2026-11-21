@@ -209,3 +209,43 @@ test('compact gallery keeps recognizing caption outside the selected slide',asyn
  const p=page.locator('.fuo-quiz');await expect(p).toBeVisible();await expect(p.locator('strong')).toContainText('CEA201_SP26_FE (7)');
  await option(p,'A').click();await expect(p).toContainText('Đúng · Nguồn');
 });
+
+test('duplicate filenames keep separate answers, stars and completion across signed URLs',async({page})=>{
+ await fixture(page,['A']);
+ await page.evaluate(()=>{
+   for(const id of [101,102]){
+     const a=document.createElement('a');a.href='/attachments/exam-webp.'+id+'/?signature=new';
+     a.dataset.fancybox='exam';a.dataset.caption='<h4>exam.webp</h4>';document.body.append(a);
+   }
+   window.openAttachment=(id,votes)=>{setQuestion('exam.webp',votes);document.querySelector('img.fancybox-image').src='/attachments/exam-webp.'+id+'/?signature=old'};
+   openAttachment(101,['A']);
+ });
+ const p=page.locator('.fuo-quiz');await expect(option(p,'A')).toBeEnabled();
+ await option(p,'B').click();await expect(p).toContainText('Sai · Nguồn');await expect(p).not.toContainText('Đã xuất CSV');
+ await p.getByRole('button',{name:'☆ Đánh dấu',exact:true}).click();
+ await page.evaluate(()=>openAttachment(102,['B']));
+ await expect(option(p,'A')).toHaveAttribute('aria-pressed','false');
+ await expect(p.getByRole('button',{name:'☆ Đánh dấu',exact:true})).toBeVisible();
+ const download=page.waitForEvent('download');await option(p,'B').click();await download;
+ await expect(p).toContainText('Đúng · Nguồn');await expect(p).toContainText('Đã xuất CSV');
+ await page.evaluate(()=>openAttachment(101,['A']));
+ await expect(option(p,'B')).toHaveAttribute('aria-pressed','true');await expect(p).toContainText('Sai · Nguồn');
+ await expect(p.getByRole('button',{name:'★ Đã đánh dấu',exact:true})).toBeVisible();
+ const questions=await page.evaluate(()=>Object.values(saved)[0].questions);
+ expect(Object.keys(questions)).toHaveLength(2);
+ expect(Object.values(questions).map(q=>q.answer)).toEqual(['A','B']);
+});
+
+test('duplicate filename waits for the matching media sidebar',async({page})=>{
+ await fixture(page,['A']);await page.evaluate(()=>{
+   const a=document.createElement('a');a.href='/attachments/exam.101/';a.dataset.caption='<h4>exam.webp</h4>';a.dataset.lbSidebarHref='/media/exam.501/?lightbox=1';document.body.append(a);
+   setQuestion('exam.webp',['B']);document.querySelector('img.fancybox-image').src=a.href;
+   const link=document.createElement('a');link.href='/media/exam.500/report';document.querySelector('.fancybox-sidebar-content').append(link);
+ });
+ const p=page.locator('.fuo-quiz');await expect(option(p,'A')).toBeDisabled();
+ await page.evaluate(()=>{
+   document.querySelector('.fancybox-sidebar-content a').href='/media/exam.501/report';
+   document.querySelector('.js-comment .bbWrapper').textContent='A';
+ });
+ await expect(option(p,'A')).toBeEnabled();await option(p,'A').click();await expect(p).toContainText('Đúng · Nguồn');
+});

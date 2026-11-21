@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FUOverflow — Luyện đề
 // @namespace    fuoverflow-quiz-local
-// @version      1.5.3
+// @version      1.5.4
 // @match        https://fuoverflow.com/threads/*
 // @grant        GM_addStyle
 // @grant        GM_getValue
@@ -60,6 +60,14 @@
     catch { return ''; }
   }
 
+  function questionKey(title, url) {
+    const urls = new Set([...document.querySelectorAll('a[href]')]
+      .filter(a => !a.closest('.fancybox__container') && attachmentTitle(a) === title)
+      .map(a => stableImageURL(a.href)));
+    // Preserve existing practice keys unless a filename is ambiguous.
+    return urls.size > 1 ? title + ' | ' + stableImageURL(url) : title;
+  }
+
   function discoverQuestions(target) {
     const links = [...document.querySelectorAll('a[href]')].filter(a => !a.closest('.fancybox__container'));
     const source = links.find(a => stableImageURL(a.href) === stableImageURL(target?.image?.src))
@@ -75,7 +83,8 @@
       if (!title) continue;
       // Arbitrary names follow gallery order; numbered question names keep numeric order.
       const number = title.match(/^Q(\d+)/i)?.[1] || title.match(/\((\d+)\)\.[^.]+$/)?.[1];
-      found.set(title.toLowerCase(), { title, url: a.href, number: number ? Number(number) : found.size + 1 });
+      const key = questionKey(title, a.href);
+      if (!found.has(key)) found.set(key, { key, title, url: a.href, number: number ? Number(number) : found.size + 1 });
     }
     catalog = found;
   }
@@ -109,7 +118,7 @@
     if (autoExported || !catalog.size) return;
     const last = [...catalog.values()].sort((a, b) => b.number - a.number)[0];
     // Only successful grading completes a question; viewing AI alone does not.
-    const completed = [...attempts].find(([title]) => title.toLowerCase() === last.title.toLowerCase())?.[1];
+    const completed = attempts.get(last.key);
     if (!completed?.answer || completed.busy) return;
     exportReview();
     autoExported = true;
@@ -306,7 +315,7 @@
       || (source && attachmentTitle(source))
       || root.querySelector('.fancybox__caption h4')?.textContent.trim();
     if (!questionImage.test(title ?? '')) return null;
-    return { title, image };
+    return { title, image, key: questionKey(title, image.src), mediaURL: source?.getAttribute('data-lb-sidebar-href') }; 
   }
 
   function readVotes(sidebar) {
@@ -374,11 +383,14 @@
     });
   }
 
-  async function waitForComments(root, title) {
+  async function waitForComments(root, target) {
     const deadline = Date.now() + 3000;
-    while (currentQuestion(root)?.title === title && root.isConnected) {
+    while (currentQuestion(root)?.key === target.key && root.isConnected) {
       const content = root.querySelector('.fancybox-sidebar-content');
-      if (content?.querySelector('.xfmgInfoBlock-title h2')?.textContent.trim() === title &&
+      const mediaPath = target.mediaURL && new URL(target.mediaURL, location.href).pathname;
+      const matchesMedia = !mediaPath || [...(content?.querySelectorAll('a[href]') || [])]
+        .some(a => new URL(a.href).pathname.startsWith(mediaPath));
+      if (matchesMedia && content?.querySelector('.xfmgInfoBlock-title h2')?.textContent.trim() === target.title &&
           !content.matches('[aria-busy="true"], .is-loading') &&
           !content.querySelector('[aria-busy="true"], .is-loading')) {
         return content;
@@ -410,10 +422,10 @@
     };
     star.onclick = () => {
       if (!state) return;
-      const item = review.get(question.title) || {};
+      const item = review.get(question.key) || {};
       item.starred = !item.starred;
       item.url = question.image?.src || item.url || '';
-      review.set(question.title, item);
+      review.set(question.key, item);
       saveReview();
       render();
     };
@@ -506,7 +518,7 @@
         button.setAttribute('aria-pressed', String(selected));
         button.disabled = Boolean(!state.type || state.busy || state.aiBusy || state.answer);
       }
-      const starred = Boolean(review.get(question.title)?.starred);
+      const starred = Boolean(review.get(question.key)?.starred);
       star.textContent = starred ? '★ Đã đánh dấu' : '☆ Đánh dấu';
       star.setAttribute('aria-pressed', String(starred));
       star.title = 'Đánh dấu câu nghi vấn để ôn lại';
@@ -571,7 +583,7 @@
 
     ai.onclick = async () => {
       const target = currentQuestion(root);
-      if (!state || !target || target.title !== question.title || state.busy || state.aiBusy) return;
+      if (!state || !target || target.key !== question.key || state.busy || state.aiBusy) return;
       if (state.aiSolution && state.aiSelected === normalize(state.selected || '')) {
         state.aiText = aiSolutionText(state.aiSolution);
         render();
@@ -603,7 +615,7 @@
 
     async function grade() {
       const target = currentQuestion(root);
-      if (!state || !target || target.title !== question.title || !state.type || !state.selected || state.busy || state.aiBusy || state.answer) return;
+      if (!state || !target || target.key !== question.key || !state.type || !state.selected || state.busy || state.aiBusy || state.answer) return;
       const submission = state;
       const selected = submission.selected;
       submission.busy = true;
@@ -621,7 +633,7 @@
         }
         submission.answer = answer;
         submission.answerOrigin = source === 'DeepSeek · đáp án tham khảo' ? 'ai' : 'comments';
-        const item = review.get(target.title) || {};
+        const item = review.get(target.key) || {};
         item.selected = selected;
         item.answer = answer;
         item.source = source;
@@ -630,7 +642,7 @@
           item.wrong = true;
           item.wrongSelected = selected;
         }
-        review.set(target.title, item);
+        review.set(target.key, item);
         saveReview();
         const result = answer === selected ? 'Đúng' : 'Sai';
         submission.message = result + ' · Nguồn ' + source;
@@ -650,7 +662,7 @@
       submission.message = 'Đang phân loại câu hỏi…';
       render();
       try {
-        const content = await waitForComments(root, target.title);
+        const content = await waitForComments(root, target);
         if (!content) throw new Error('Bình luận chưa tải xong. Bấm Thử lại phân loại.');
         submission.votes = readVotes(content);
         submission.type = submission.votes.length
@@ -673,7 +685,7 @@
     return () => {
       const next = currentQuestion(root);
       if (next) discoverQuestions(next);
-      if (question?.title === next?.title) {
+      if (question?.key === next?.key) {
         const content = sidebar.querySelector('.fancybox-sidebar-content');
         const visible = Boolean(showComments && question &&
           content?.querySelector('.xfmgInfoBlock-title h2')?.textContent.trim() === question.title);
@@ -683,10 +695,10 @@
       question = next;
       showComments = false;
       syncComments();
-      if (question && !attempts.has(question.title)) {
-        attempts.set(question.title, { selected: '', answer: '', message: '', busy: false, aiBusy: false, aiText: '', aiSolution: null, aiPending: null, answerOrigin: '', type: '', typeError: false, votes: [] });
+      if (question && !attempts.has(question.key)) {
+        attempts.set(question.key, { selected: '', answer: '', message: '', busy: false, aiBusy: false, aiText: '', aiSolution: null, aiPending: null, answerOrigin: '', type: '', typeError: false, votes: [] });
       }
-      state = question ? attempts.get(question.title) : null;
+      state = question ? attempts.get(question.key) : null;
       render();
       if (state && !state.type && !state.busy) prepare(question, state);
     };

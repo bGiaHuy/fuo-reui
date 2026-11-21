@@ -142,3 +142,11 @@ order. Existing full-filename practice keys are preserved.
 Verified: 88 Playwright desktop/mobile tests passed, including arbitrary filenames
 and changing URL signatures, plus captions moved outside the slide on mobile. Live CEA201 gallery UI was checked with injected GM
 storage shims and mocked OCR; no installed userscript update or live AI call.
+
+## v1.5.4 — Ảnh trùng tên
+
+Các ảnh có cùng tên file trong một đề được phân biệt bằng đường dẫn attachment
+(bỏ query/hash ký tạm thời). Đáp án, dấu sao và CSV được lưu riêng cho từng ảnh;
+đề có tên ảnh riêng vẫn dùng khóa lưu cũ. Với sidebar có ID media, script chờ
+đúng media trước khi đọc bình luận. Dữ liệu cũ đã gộp nhiều ảnh trùng tên không
+thể tự tách lại chính xác; hãy làm lại các câu đó sau khi cập nhật.

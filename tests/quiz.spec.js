@@ -5,11 +5,11 @@ async function fixture(page, votes = ['AC','CA','AC','AB','AB'], opts = {}) {
   await page.route('https://fuoverflow.com/**', route => route.fulfill({contentType:'text/html',body:'<html><body></body></html>'}));
   await page.goto('https://fuoverflow.com/threads/test/');
   await page.evaluate(({votes,opts}) => {
-    window.saved = {}; window.calls = 0; window.ocrCalls = 0;
+    window.gmStore = opts.store || {}; window.saved = {}; window.calls = 0; window.ocrCalls = 0;
     window.GM_addStyle = css => {const s=document.createElement('style');s.textContent=css;document.head.append(s)};
     window.GM_getResourceText = () => '';
-    window.GM_getValue = (key, value) => key === 'deepseekKey' ? (opts.key || '') : value;
-    window.GM_setValue = (key,value) => window.saved[key]=value;
+    window.GM_getValue = (key, value) => Object.hasOwn(gmStore,key) ? gmStore[key] : key === 'deepseekKey' ? (opts.key || '') : value;
+    window.GM_setValue = (key,value) => {gmStore[key]=value;window.saved[key]=value};
     window.GM_registerMenuCommand = () => {};
     window.fetch = async () => ({ok:true,blob:async()=>new Blob(['test'],{type:'image/png'})});
     window.GM_xmlhttpRequest = args => {window.calls++;window.lastAIRequest=JSON.parse(args.data);setTimeout(()=>args.onload({status:opts.aiError?500:200,responseText:JSON.stringify({choices:[{message:{content:opts.aiRaw ?? JSON.stringify({answer:opts.ai || 'AC',explanation:opts.explanation || 'Các phương án này thỏa mãn điều kiện của câu hỏi.'})}}]})}),opts.aiDelay || 0)};
@@ -32,6 +32,83 @@ async function fixture(page, votes = ['AC','CA','AC','AB','AB'], opts = {}) {
   return page.locator('.fuo-quiz');
 }
 const option=(panel,letter)=>panel.locator('.fuo-options button').filter({hasText:new RegExp('^'+letter+'(?: |$)')});
+test('key deletion invalidates cached AI and keeps secrets outside the dialog',async({page})=>{
+ const p=await fixture(page,['A'],{key:'test-secret'});
+ await p.getByRole('button',{name:'Xem đáp án AI'}).click();
+ await expect(p.locator('.fuo-ai-answer')).toBeVisible();
+ await p.getByRole('button',{name:'Cài đặt AI',exact:true}).click();
+ const dialog=page.getByRole('dialog');
+ expect(await dialog.evaluate(el=>el.outerHTML)).not.toContain('test-secret');
+ await dialog.getByRole('button',{name:'Xóa key',exact:true}).click();
+ await dialog.getByRole('button',{name:'Đóng',exact:true}).click();
+ await expect(p.locator('.fuo-ai-result')).toBeHidden();
+ await p.getByRole('button',{name:'Xem đáp án AI'}).click();
+ await expect(p.locator('.fuo-ai-result')).toContainText('Hãy cài API key');
+ expect(await page.evaluate(()=>calls)).toBe(1);
+});
+test('key deletion rejects an AI response already in flight',async({page})=>{
+ const p=await fixture(page,['A'],{key:'test-secret',aiDelay:1000});
+ await p.getByRole('button',{name:'Xem đáp án AI'}).click();
+ await expect.poll(()=>page.evaluate(()=>calls)).toBe(1);
+ await p.getByRole('button',{name:'Cài đặt AI',exact:true}).click();
+ await page.getByRole('dialog').getByRole('button',{name:'Xóa key',exact:true}).click();
+ await page.getByRole('dialog').getByRole('button',{name:'Đóng',exact:true}).click();
+ await expect(p.locator('.fuo-ai-result')).toContainText('Cấu hình AI đã thay đổi');
+ await expect(p.locator('.fuo-ai-answer')).toHaveCount(0);
+});
+for(const type of ['openai','deepseek','anthropic','gemini']) test('BYOK request and response for '+type,async({page})=>{
+ const profile={baseUrl:'https://example.com/v1',compatibleType:type,model:'test-model',thinking:'high'};
+ const p=await fixture(page,['A'],{store:{fuoAIConfig:{activeId:type,providers:{[type]:profile}},fuoAIKeys:{[type]:{origin:'https://example.com',key:'test-secret'}}}});
+ await page.evaluate(type=>{
+   window.GM_xmlhttpRequest=args=>{
+     window.request={url:args.url,headers:args.headers,body:JSON.parse(args.data),anonymous:args.anonymous,timeout:args.timeout};
+     const text=JSON.stringify({answer:'A',explanation:'Valid explanation.'});
+     const result=type==='anthropic'?{content:[{type:'text',text}]}:type==='gemini'?{candidates:[{content:{parts:[{text}]}}]}:{choices:[{message:{content:text}}]};
+     setTimeout(()=>args.onload({status:200,responseText:JSON.stringify(result)}),0);
+   };
+ },type);
+ await p.getByRole('button',{name:'Xem đáp án AI'}).click();
+ await expect(p.locator('.fuo-ai-answer')).toHaveText('Đáp án: A');
+ const req=await page.evaluate(()=>request);
+ expect(req.anonymous).toBe(true);expect(req.timeout).toBe(120000);
+ expect(req.url).not.toContain('test-secret');expect(req.body.model || 'test-model').toBe('test-model');
+ if(type==='anthropic') {expect(req.headers['x-api-key']).toBe('test-secret');expect(req.body.thinking.budget_tokens).toBe(10240);}
+ else if(type==='gemini') {expect(req.headers['x-goog-api-key']).toBe('test-secret');expect(req.body.generationConfig.thinkingConfig.thinkingBudget).toBe(8192);}
+ else {expect(req.headers.Authorization).toBe('Bearer test-secret');expect(req.body.messages[0].content[2].image_url.url).toMatch(/^data:image\/png;base64,/);}
+});
+test('settings validate endpoints, remove keys on origin change and contain keyboard focus',async({page})=>{
+ const p=await fixture(page,['A'],{key:'test-secret'});
+ await p.getByRole('button',{name:'Cài đặt AI',exact:true}).click();
+ const d=page.getByRole('dialog');
+ await d.getByRole('button',{name:'Lưu cấu hình'}).focus();await page.keyboard.press('Tab');
+ await expect(d.getByRole('button',{name:'Đóng hộp thoại'})).toBeFocused();
+ await page.keyboard.press('Shift+Tab');await expect(d.getByRole('button',{name:'Lưu cấu hình'})).toBeFocused();
+ for(const url of ['http://example.com/v1','https://user:pass@example.com/v1','https://example.com/v1?key=abc']) {
+   await d.getByLabel('Base URL',{exact:true}).fill(url);await d.getByRole('button',{name:'Lưu cấu hình'}).click();
+   await expect(d.getByRole('alert')).toBeVisible();
+   expect(await page.evaluate(()=>gmStore.fuoAIConfig)).toBeUndefined();
+ }
+ await d.getByLabel('Base URL',{exact:true}).fill('https://example.com/v1');
+ await d.getByRole('button',{name:'Lưu cấu hình'}).click();
+ await expect(d.getByRole('alert')).toContainText('API key cũ đã bị xóa');
+ expect(await page.evaluate(()=>gmStore.deepseekKey)).toBe('');
+ await page.keyboard.press('Escape');await expect(p.getByRole('button',{name:'Cài đặt AI',exact:true})).toBeFocused();
+});
+test('model discovery filters invalid IDs and stale lists on endpoint edit',async({page})=>{
+ const p=await fixture(page,['A'],{key:'test-secret'});
+ await page.evaluate(()=>{window.GM_xmlhttpRequest=args=>{
+   window.modelRequest={url:args.url,anonymous:args.anonymous,headers:args.headers};
+   setTimeout(()=>args.onload({status:200,responseText:JSON.stringify({data:[{id:'valid-model',name:'<script>bad</script>'},{id:'../bad'},{id:'valid-model'}]})}),0);
+ }});
+ await p.getByRole('button',{name:'Cài đặt AI',exact:true}).click();const d=page.getByRole('dialog');
+ await d.getByRole('button',{name:'Tải danh sách (/models)',exact:true}).click();
+ await expect(d.getByLabel('Danh sách model')).toBeVisible();
+ expect(await d.getByLabel('Danh sách model').locator('option').count()).toBe(2);
+ expect(await d.locator('script').count()).toBe(0);
+ expect(await page.evaluate(()=>modelRequest)).toMatchObject({url:'https://api.deepseek.com/models',anonymous:true});
+ await d.getByLabel('Base URL',{exact:true}).fill('https://example.com/v1');
+ await expect(d.getByLabel('Danh sách model')).toBeHidden();
+});
 test('long AI explanations stay structured and reachable in a fixed sidebar',async({page},testInfo)=>{
  const explanation='Trong biểu đồ ER, hình chữ nhật kép biểu diễn thực thể yếu. '+ 'Phương án B sai vì thuộc tính đa trị dùng hình elip kép. '.repeat(35)+'\nKết luận: chọn A.';
  const p=await fixture(page,['A'],{key:'test',ai:'A',explanation});

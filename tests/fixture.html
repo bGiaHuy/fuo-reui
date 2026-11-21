@@ -1,19 +1,86 @@
 <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Quiz fixture</title><body><script>(({votes,opts}) => {
-    window.saved = {}; window.calls = 0; window.ocrCalls = 0;
+    const store = { deepseekKey: opts.key || '' };
+    window.saved = store; window.gmStore = store; window.calls = 0; window.ocrCalls = 0;
+    window.menuCommands = {};
     window.GM_addStyle = css => {const s=document.createElement('style');s.textContent=css;document.head.append(s)};
     window.GM_getResourceText = () => '';
-    window.GM_getValue = (key, value) => key === 'deepseekKey' ? (opts.key || '') : value;
-    window.GM_setValue = (key,value) => window.saved[key]=value;
-    window.GM_registerMenuCommand = () => {};
+    window.GM_getValue = (key, value) => Object.prototype.hasOwnProperty.call(store, key) ? store[key] : value;
+    window.GM_setValue = (key, value) => { store[key] = value; };
+    window.GM_registerMenuCommand = (name, fn) => { window.menuCommands[name] = fn; };
     window.fetch = async () => ({ok:true,blob:async()=>new Blob(['test'],{type:'image/png'})});
-    window.GM_xmlhttpRequest = args => {window.calls++;setTimeout(()=>args.onload({status:opts.aiError?500:200,responseText:JSON.stringify({choices:[{message:{content:JSON.stringify({answer:opts.ai || 'AC',explanation:'Các phương án này thỏa mãn điều kiện của câu hỏi.'})}}]})}),opts.aiDelay || 0)};
+    window.GM_xmlhttpRequest = args => {
+      window.calls++;
+      const method = (args.method || 'POST').toUpperCase();
+      const url = String(args.url || '');
+      const headers = args.headers || {};
+      const isModels = method === 'GET' && /\/models$/i.test(url);
+      const isGemini = url.includes(':generateContent') || url.includes('generativelanguage.googleapis.com') || Boolean(headers['x-goog-api-key']);
+      const isAnthropic = url.endsWith('/messages') || url.includes('anthropic') || Boolean(headers['x-api-key']);
+      const isDeepSeek = url.includes('deepseek');
+      setTimeout(() => {
+        if (opts.aiError) {
+          args.onload({ status: 500, responseText: JSON.stringify({ error: { message: 'Mock AI error' } }) });
+          return;
+        }
+        if (isModels) {
+          let payload;
+          if (isGemini) {
+            payload = {
+              models: [
+                { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash', supportedGenerationMethods: ['generateContent'] },
+                { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro', supportedGenerationMethods: ['generateContent'] }
+              ]
+            };
+          } else if (isAnthropic) {
+            payload = {
+              data: [
+                { id: 'claude-sonnet-4-5', display_name: 'Claude Sonnet 4.5' },
+                { id: 'claude-3-5-haiku', display_name: 'Claude 3.5 Haiku' }
+              ]
+            };
+          } else if (isDeepSeek) {
+            payload = {
+              data: [
+                { id: 'deepseek-flash', name: 'DeepSeek Flash' },
+                { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+                { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' }
+              ]
+            };
+          } else {
+            payload = {
+              data: [
+                { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini' },
+                { id: 'gpt-4o', name: 'GPT-4o' },
+                { id: 'o4-mini', name: 'o4-mini' }
+              ]
+            };
+          }
+          args.onload({ status: 200, responseText: JSON.stringify(payload) });
+          return;
+        }
+        const solutionJson = JSON.stringify({
+          answer: opts.ai || 'AC',
+          explanation: 'Các phương án này thỏa mãn điều kiện của câu hỏi.'
+        });
+        let responseBody;
+        if (isGemini) {
+          responseBody = { candidates: [{ content: { parts: [{ text: solutionJson }] } }] };
+        } else if (isAnthropic) {
+          responseBody = { content: [{ type: 'text', text: solutionJson }] };
+        } else {
+          responseBody = { choices: [{ message: { content: solutionJson } }] };
+        }
+        args.onload({ status: 200, responseText: JSON.stringify(responseBody) });
+      }, opts.aiDelay || 0);
+    };
     window.Tesseract = {createWorker:async()=>({recognize:async()=>{window.ocrCalls++;await new Promise(r=>setTimeout(r,opts.ocrDelay||0));if(opts.ocrError)throw Error('OCR');return {data:{text:opts.text || 'Select one answer'}}},terminate:async()=>{}})};
+    const mockImageUrl = URL.createObjectURL(new Blob([Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), c => c.charCodeAt(0))], { type: 'image/gif' }));
     window.setQuestion = (name, answers) => {
       document.querySelector('.fancybox__container')?.remove();
       const root=document.createElement('div');root.className='fancybox__container fancybox-show-sidebar';
       root.innerHTML='<div class="fancybox__slide is-selected"><div class="fancybox__caption"><h4></h4></div><img class="fancybox-image"></div><aside class="fancybox-sidebar"><div class="fancybox-sidebar-content"><div class="xfmgInfoBlock-title"><h2></h2></div></div></aside>';
       root.querySelector('h4').textContent=name;root.querySelector('h2').textContent=name;
-      root.querySelector('img').src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+      root.querySelector('img').src=mockImageUrl;
       for(const [i,answer] of answers.entries()){
         const c=document.createElement('div');c.className='js-comment';c.dataset.author=String(i);
         c.innerHTML='<div class="comment-body"><div class="bbWrapper"></div></div>';c.querySelector('.bbWrapper').textContent=answer;root.querySelector('.fancybox-sidebar-content').append(c);

@@ -12,8 +12,8 @@
 </p>
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_Userscript-v2.1.0-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt Userscript"></a>
-  <a href="https://github.com/bGiaHuy/fuo-reui/actions"><img src="https://img.shields.io/badge/Playwright-114_Passed-brightgreen?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright Test Suite"></a>
+  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_Userscript-v2.2.0-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt Userscript"></a>
+  <a href="https://github.com/bGiaHuy/fuo-reui/actions"><img src="https://img.shields.io/badge/Playwright-122_Passed-brightgreen?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright Test Suite"></a>
   <a href="#8-giới-hạn-và-tích-hợp"><img src="https://img.shields.io/badge/AI_BYOK-DeepSeek_|_OpenAI_|_Claude_|_Gemini_|_Ollama-blueviolet?style=for-the-badge" alt="AI Multi-provider"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License MIT"></a>
 </p>
@@ -90,7 +90,7 @@ Người dùng chỉ cần trình duyệt có Tampermonkey. Node.js và Python c
 ### Bước 2: Cài Userscript
 
 <p>
-  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_ngay-fuo--reui.user.js_(v2.1.0)-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt fuo-reui.user.js"></a>
+  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_ngay-fuo--reui.user.js_(v2.2.0)-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt fuo-reui.user.js"></a>
 </p>
 
 1. Bấm nút **Cài đặt ngay** ở trên để mở file userscript trên nhánh `main`.
@@ -111,7 +111,7 @@ Mở Dashboard Tampermonkey → **Create a new script**, thay nội dung mặc �
 | Tiêu chí | Chi tiết |
 | :--- | :--- |
 | **Nền tảng hỗ trợ** | Chrome, Edge, Brave, Firefox, Safari, Opera thông qua **Tampermonkey** hoặc **Violentmonkey**. |
-| **Trạng thái** | **v2.1.0** — hỗ trợ tự kiểm tra cập nhật qua Tampermonkey, đã kiểm thử với **114 ca Playwright** cho cả desktop (`1280×800`) và mobile (`390×844`). |
+| **Trạng thái** | **v2.2.0** — hỗ trợ tự kiểm tra cập nhật qua Tampermonkey, đã kiểm thử với **122 ca Playwright** cho cả desktop (`1280×800`) và mobile (`390×844`). |
 | **License** | Mã nguồn mở theo **[MIT License](./LICENSE)**. |
 | **Link bản mới nhất** | [`fuo-reui.user.js` trên nhánh `main`](https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js). |
 
@@ -133,10 +133,11 @@ FUO reUI chèn bảng trả lời vào thanh bên của Fancybox và mặc đị
 
 - **Làm bài trực tiếp trên ảnh:** Bảng nút `A–H` nằm ở thanh bên Fancybox, không che đề. Tự phân biệt câu chọn một đáp án (chấm ngay khi bấm) và câu chọn nhiều đáp án (bấm **Submit** để chấm khớp cả tập).
 - **Chấm theo đồng thuận cộng đồng:** Đọc bình luận của ảnh đang xem, bỏ phần trích dẫn, tính tối đa một phiếu hợp lệ cho mỗi tác giả và lấy tập đáp án nhiều phiếu nhất.
-- **Nhận diện loại câu hỏi qua OCR:** Khi chưa có bình luận hợp lệ, Tesseract.js (`eng+vie`) đọc văn bản trên ảnh để phân biệt câu chọn một hay chọn nhiều.
+- **Nhận diện loại câu hỏi qua OCR & lưu cache:** Khi chưa có bình luận hợp lệ, Tesseract.js (`eng+vie`) đọc ảnh để phân biệt câu chọn một hay chọn nhiều; kết quả được lưu vào `GM_setValue` (`fuoOcrTypeCache`) theo URL ổn định để tránh chạy lại OCR khi tải lại trang.
 - **Lời giải AI (BYOK đa nhà cung cấp):** Hỗ trợ sẵn 5 preset (`DeepSeek`, `OpenAI`, `Anthropic Claude`, `Google Gemini`, `OpenRouter`) và tối đa `20` hồ sơ tùy chỉnh; cho tải `/models`, chỉnh mức `Thinking` và hiển thị công thức toán bằng KaTeX.
 - **Hỗ trợ Local LLM:** Kết nối trực tiếp Ollama (`http://localhost:11434/v1`) hoặc LM Studio (`http://localhost:1234/v1`) mà không cần API key.
-- **Đánh dấu câu cần ôn & xuất CSV:** Lưu lịch sử câu sai và câu gắn sao (`☆ Đánh dấu`) theo từng bài viết; xuất file `<tên đề>_cau-can-on.csv`.
+- **Chế độ thi thử bấm giờ & vòng ôn tập:** Bật **Thi thử** để làm liền mạch cả đề có đồng hồ đếm ngược, ẩn đúng/sai từng câu và chấm tổng điểm khi bấm **Nộp bài**; bật **Ôn tập** để lặp riêng các câu đã sai hoặc gắn sao đến khi làm đúng hết.
+- **Sao lưu JSON, xuất CSV & thẻ Anki:** Lưu lịch sử theo từng bài viết; hỗ trợ xuất CSV, xuất thẻ **Anki (`.tsv`)** và sao lưu/khôi phục tiến độ qua file **JSON** (không gồm API key).
 - **Thanh tiến độ, nhảy nhanh & phím tắt:** Hiển thị số câu đã làm, tỷ lệ đúng và nút nhảy trực tiếp tới **Câu sai** / **Câu gắn sao** ngay trên bảng, kèm phím tắt bàn phím cho toàn bộ thao tác chính.
 
 ---
@@ -165,7 +166,9 @@ flowchart LR
 - **`Cài đặt AI`**: Mở hộp thoại chọn nhà cung cấp, chỉnh Base URL, loại tương thích, đặt API key, tải danh sách `/models` và chọn mức `Thinking`.
 - **`☆ Đánh dấu` / `★ Đã đánh dấu`**: Gắn hoặc bỏ dấu sao cho câu muốn ôn lại.
 - **`Xuất CSV`**: Tải file `<tên đề>_cau-can-on.csv` chứa các câu đã sai hoặc được đánh dấu của đề hiện tại.
-- **`Câu sai (N)` / `Câu gắn sao (N)`**: Hiện ngay dưới thanh tiến độ khi đã có câu sai hoặc câu gắn sao; bấm để nhảy nhanh qua từng câu cần xem lại.
+- **`Sao lưu`**: Mở hộp thoại xuất thẻ **Anki (`.tsv`)**, **Sao lưu JSON** và **Khôi phục JSON** (tiến độ, cache OCR và cấu hình AI, không gồm API key).
+- **`Thi thử`**: Bắt đầu chế độ thi thử bấm giờ (1–300 phút), ẩn đúng/sai từng câu và khóa bình luận/AI cho đến khi bấm **Nộp bài**.
+- **`Câu sai (N)` / `Câu gắn sao (N)` / `Ôn tập (N)`**: Hiện ngay dưới thanh tiến độ khi đã có dữ liệu; dùng để nhảy nhanh qua từng câu cần xem lại hoặc mở vòng ôn tập làm lại đến khi đúng hết.
 
 ### Phím tắt bàn phím
 
@@ -191,7 +194,7 @@ flowchart LR
   - Chấm theo bình luận và OCR không cần tài khoản hay API key.
   - Tính năng AI chạy theo mô hình **BYOK (Bring Your Own Key)**: chi phí và hạn mức tính theo tài khoản API cá nhân của bạn (DeepSeek, OpenAI, Claude, Gemini, OpenRouter), trừ khi dùng endpoint HTTP cục bộ (`localhost`, `127.0.0.1`, `[::1]`).
 - **Độ tin cậy & giới hạn kỹ thuật:** Cả bình luận cộng đồng và AI đều là nguồn tham khảo; phần trăm hiển thị là tỷ lệ phiếu bình luận, không phải xác suất đúng. Luồng AI chỉ đọc ảnh cùng origin với trang (`PNG/JPEG/WebP/GIF`, tối đa `15 MB`). Timeout: `15s` cho `/models`; `60s` (`default`/`off`), `90s` (`low`/`medium`) hoặc `120s` (`high`) cho AI; `60s` mỗi bước cho OCR.
-- **Chưa hỗ trợ:** Chưa đồng bộ lịch sử giữa nhiều máy hoặc nhiều trình duyệt — hãy xuất CSV để lưu bản ôn tập.
+- **Chưa hỗ trợ:** Chưa đồng bộ tự động qua đám mây giữa nhiều thiết bị — dùng **Sao lưu JSON** / **Khôi phục JSON** (hoặc xuất CSV / Anki `.tsv`) khi chuyển máy.
 
 ---
 
@@ -209,7 +212,7 @@ flowchart LR
 ## 10. Thông tin cho người đóng góp
 
 - **Công nghệ:** JavaScript thuần trong một file duy nhất [`fuo-reui.user.js`](./fuo-reui.user.js) (không cần bước build), Tampermonkey API (`GM_*`), Tesseract.js `5.1.1`, KaTeX `0.19.1`, Playwright `1.56.1`.
-- **Chạy kiểm thử tự động (114 ca trên Desktop và Mobile):**
+- **Chạy kiểm thử tự động (122 ca trên Desktop và Mobile):**
   ```sh
   git clone https://github.com/bGiaHuy/fuo-reui.git
   cd fuo-reui

@@ -385,3 +385,102 @@ test('progress bar tracks accuracy and quick-jump switches to wrong or starred q
  await p.getByRole('button',{name:'Câu gắn sao (1)',exact:true}).click();
  await expect(p.locator('strong')).toContainText('Q2');
 });
+
+test('persisted OCR cache skips Tesseract across visits and saves after grading',async({page})=>{
+ const p=await fixture(page,[],{store:{fuoOcrTypeCache:{'https://fuoverflow.com/Q1.png':'multiple'}}});
+ await expect(p.locator('strong')).toContainText('Chọn nhiều');
+ expect(await page.evaluate(()=>ocrCalls)).toBe(0);
+ await page.evaluate(()=>setQuestion('Q2.png',[]));
+ await expect(p.locator('strong')).toContainText('Q2 · Chọn một');
+ expect(await page.evaluate(()=>ocrCalls)).toBe(1);
+ await page.evaluate(()=>dispatchEvent(new Event('pagehide')));
+ expect(await page.evaluate(()=>gmStore.fuoOcrTypeCache['https://fuoverflow.com/Q2.png'])).toBe('single');
+});
+
+test('exam mode hides per-question grading, grades all on submit and jumps to wrong items',async({page})=>{
+ const p=await fixture(page,['A']);
+ await page.evaluate(()=>{
+   window.prompt=()=>'30';
+   const answers={ 'Q1.png':['A'], 'Q2.png':['B'] };
+   for(const name of ['Q1.png','Q2.png']){
+     const a=document.createElement('a');
+     a.href='/'+name; a.textContent=name; a.dataset.fancybox='exam';
+     a.addEventListener('click',e=>{ e.preventDefault(); setQuestion(name,answers[name]); });
+     document.body.append(a);
+   }
+   dispatchEvent(new Event('resize'));
+ });
+ await p.getByRole('button',{name:'Thi thử',exact:true}).click();
+ await expect(p.locator('.fuo-exam-bar')).toContainText('Thi thử · Đã chọn 0/2');
+ await expect(p.getByRole('button',{name:'Xem đáp án AI'})).toBeDisabled();
+ await expect(p.getByRole('button',{name:'Hiện bình luận'})).toBeDisabled();
+ await option(p,'B').click();
+ await expect(option(p,'B')).toHaveAttribute('aria-pressed','true');
+ await expect(option(p,'B')).toHaveAttribute('data-mark','');
+ await page.evaluate(()=>document.querySelector('a[href="/Q2.png"]').click());
+ await expect(p.locator('strong')).toContainText('Q2');
+ await option(p,'B').click();
+ await expect(p.locator('.fuo-exam-bar')).toContainText('Đã chọn 2/2');
+ await p.getByRole('button',{name:'Nộp bài',exact:true}).click();
+ await expect(p.locator('.fuo-exam-summary')).toContainText('Kết quả thi thử: 1/2 đúng (50%)');
+ await p.locator('.fuo-exam-wrong-list').getByRole('button',{name:'Q1',exact:true}).click();
+ await expect(p.locator('strong')).toContainText('Q1');
+ await expect(option(p,'B')).toHaveAttribute('data-mark','wrong');
+ await expect(option(p,'A')).toHaveAttribute('data-mark','right');
+});
+
+test('review round loops wrong and starred questions until all are answered right',async({page})=>{
+ const p=await fixture(page,['A']);
+ await page.evaluate(()=>{
+   const answers={ 'Q1.png':['A'], 'Q2.png':['B'] };
+   for(const name of ['Q1.png','Q2.png']){
+     const a=document.createElement('a');
+     a.href='/'+name; a.textContent=name; a.dataset.fancybox='exam';
+     a.addEventListener('click',e=>{ e.preventDefault(); setQuestion(name,answers[name]); });
+     document.body.append(a);
+   }
+   dispatchEvent(new Event('resize'));
+ });
+ await option(p,'B').click();
+ await page.evaluate(()=>document.querySelector('a[href="/Q2.png"]').click());
+ await expect(p.locator('strong')).toContainText('Q2');
+ await p.getByRole('button',{name:'☆ Đánh dấu',exact:true}).click();
+ await p.getByRole('button',{name:'Ôn tập (2)',exact:true}).click();
+ await expect(p.locator('.fuo-review-bar')).toContainText('Vòng ôn tập: còn 2/2 câu');
+ await expect(p.locator('strong')).toContainText('Q1');
+ await option(p,'A').click();
+ await expect(p.locator('.fuo-review-bar')).toContainText('Vòng ôn tập: còn 1/2 câu');
+ await p.getByRole('button',{name:'Câu tiếp',exact:true}).click();
+ await expect(p.locator('strong')).toContainText('Q2');
+ await option(p,'B').click();
+ await expect(p.locator('.fuo-review-bar')).toContainText('Đã ôn đúng hết 2/2 câu.');
+});
+
+test('backup modal exports Anki TSV and JSON without API keys and restores progress',async({page})=>{
+ const p=await fixture(page,['A'],{key:'super-secret-key'});
+ await option(p,'B').click();
+ await p.getByRole('button',{name:'☆ Đánh dấu',exact:true}).click();
+ await p.getByRole('button',{name:'Sao lưu',exact:true}).click();
+ const d=page.getByRole('dialog');
+ const ankiDl=page.waitForEvent('download');
+ await d.getByRole('button',{name:'Xuất Anki (.tsv)',exact:true}).click();
+ const ankiContent=fs.readFileSync(await (await ankiDl).path(),'utf8');
+ expect(ankiContent).toContain('Q1.png');
+ expect(ankiContent).toContain('Đáp án:</b> A');
+ expect(ankiContent).toContain('sai danh-dau');
+ const jsonDl=page.waitForEvent('download');
+ await d.getByRole('button',{name:'Sao lưu JSON',exact:true}).click();
+ const backupPath=await (await jsonDl).path();
+ const backupText=fs.readFileSync(backupPath,'utf8');
+ expect(backupText).not.toContain('super-secret-key');
+ const parsed=JSON.parse(backupText);
+ expect(parsed.app).toBe('fuo-reui');
+ expect(parsed.review.questions['Q1.png'].wrong).toBe(true);
+ // Modify backup JSON and restore it into the page
+ parsed.review.questions['Q9.png']={selected:'C',answer:'D',wrong:true,starred:true};
+ const modified=JSON.stringify(parsed);
+ await d.locator('input[type="file"]').setInputFiles({name:'backup.json',mimeType:'application/json',buffer:Buffer.from(modified,'utf8')});
+ await expect(d.getByRole('alert')).toContainText('Đã khôi phục 2 câu');
+ await d.getByRole('button',{name:'Đóng',exact:true}).click();
+ await expect(p.getByRole('button',{name:'Câu sai (2)',exact:true})).toBeVisible();
+});

@@ -15,7 +15,7 @@
   <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_Userscript-v2.0.0-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt Userscript"></a>
   <a href="https://github.com/bGiaHuy/fuo-reui/actions"><img src="https://img.shields.io/badge/Playwright-108_Passed-brightgreen?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright Test Suite"></a>
   <a href="#8-giới-hạn-và-tích-hợp"><img src="https://img.shields.io/badge/AI_BYOK-DeepSeek_|_OpenAI_|_Claude_|_Gemini_|_Ollama-blueviolet?style=for-the-badge" alt="AI Multi-provider"></a>
-  <a href="#11-credits-và-giấy-phép"><img src="https://img.shields.io/badge/Giấy_phép-MIT-green?style=for-the-badge" alt="License MIT"></a>
+  <a href="#11-credits-và-licence"><img src="https://img.shields.io/badge/Giấy_phép-MIT-green?style=for-the-badge" alt="License MIT"></a>
 </p>
 
 ---

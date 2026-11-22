@@ -32,7 +32,7 @@
 8. [Giới hạn và tích hợp](#8-giới-hạn-và-tích-hợp)
 9. [Dữ liệu và quyền riêng tư](#9-dữ-liệu-và-quyền-riêng-tư)
 10. [Thông tin cho người đóng góp](#10-thông-tin-cho-người-đóng-góp)
-11. [Credits và giấy phép](#11-credits-và-giấy-phép)
+11. [Credits và licence](#11-credits-và-giấy-phép)
 
 ---
 
@@ -68,7 +68,7 @@
 | :--- | :--- |
 | **Nền tảng hỗ trợ** | Hoạt động trên mọi trình duyệt hiện đại (Chrome, Edge, Firefox, Brave, Safari, Opera) thông qua **Tampermonkey** hoặc **Violentmonkey**. |
 | **Trạng thái dự án** | **v2.0.0** — Hoạt động ổn định, bộ kiểm thử tự động gồm **108 bài test Playwright** chạy thông suốt trên cả Desktop và Mobile. |
-| **Giấy phép** | Mã nguồn mở hoàn toàn theo chuẩn **MIT License**. |
+| **licence** | Mã nguồn mở hoàn toàn theo chuẩn **MIT License**. |
 | **Link cài đặt bản mới nhất** | [`fuo-reui.user.js` trên nhánh `main`](https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js). |
 
 ---
@@ -189,7 +189,7 @@ Chúng tôi luôn hoan nghênh các đóng góp (Pull Request), báo lỗi (Issu
 
 ---
 
-## 11. Credits và giấy phép
+## 11. Credits và licence
 
 ### Nhóm phát triển & Đóng góp
 - **Gia Huy Bùi ([@bGiaHuy](https://github.com/bGiaHuy))** — *Maintainer & Tác giả chính*: Thiết kế kiến trúc BYOK AI đa nhà cung cấp, hệ thống cấu hình model/thinking, nâng cấp giao diện dark mode hiện đại, tích hợp công thức KaTeX và toàn bộ test suite Playwright.
@@ -202,5 +202,5 @@ Chúng tôi luôn hoan nghênh các đóng góp (Pull Request), báo lỗi (Issu
 - [Playwright](https://playwright.dev/) (Microsoft) — Bộ kiểm thử tự động End-to-End.
 - [Diễn đàn FUOverflow](https://fuoverflow.com/) — Nền tảng chia sẻ tài liệu của sinh viên FPT.
 
-### Giấy phép (License)
-Phát hành theo giấy phép mã nguồn mở **MIT License**. Bạn được tự do sử dụng, chỉnh sửa và phân phối lại vì mục đích phi thương mại và học tập.
+### licence (License)
+Phát hành theo licence mã nguồn mở **MIT License**. Bạn được tự do sử dụng, chỉnh sửa và phân phối lại vì mục đích phi thương mại và học tập.

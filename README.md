@@ -68,21 +68,41 @@ Người dùng chỉ cần trình duyệt có Tampermonkey. Node.js và Python c
 
 ### Bước 1: Cài Tampermonkey
 
-- **Khuyên dùng (Chrome, Edge, Brave, Cốc Cốc, Arc):** cài [Tampermonkey trên Chrome Web Store](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo). Trên trình duyệt Chromium bản mới, mở `chrome://extensions` (hoặc trang quản lý tiện ích của trình duyệt) và bật **Developer mode** / quyền chạy userscript nếu Tampermonkey yêu cầu.
-- **Lựa chọn thay thế (trình duyệt hoặc tiện ích khác):**
-  - Firefox: [Firefox Add-ons (AMO)](https://addons.mozilla.org/firefox/addon/tampermonkey/)
-  - Microsoft Edge (store riêng): [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd)
-  - Safari: [Mac App Store](https://apps.apple.com/app/tampermonkey/id1482490089)
-  - Opera: [Opera Add-ons](https://addons.opera.com/extensions/details/tampermonkey-beta/)
-  - Trình quản lý userscript thay thế: [Violentmonkey](https://violentmonkey.github.io/)
+**Khuyên dùng** *(Chrome, Edge, Brave, Cốc Cốc, Arc)*:
+
+<p>
+  <a href="https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo"><img src="https://img.shields.io/badge/Chrome_Web_Store-Tampermonkey_(Khuyên_dùng)-1A73E8?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Cài Tampermonkey trên Chrome Web Store"></a>
+</p>
+
+> [!NOTE]
+> Trên trình duyệt nhân Chromium bản mới, mở `chrome://extensions` (hoặc trang quản lý tiện ích của trình duyệt) và bật **Developer mode** / quyền chạy userscript nếu Tampermonkey yêu cầu.
+
+**Lựa chọn thay thế** *(trình duyệt hoặc tiện ích khác)*:
+
+<p>
+  <a href="https://addons.mozilla.org/firefox/addon/tampermonkey/"><img src="https://img.shields.io/badge/Firefox-Add--ons-FF7139?style=flat-square&logo=firefoxbrowser&logoColor=white" alt="Tampermonkey trên Firefox Add-ons"></a>
+  <a href="https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd"><img src="https://img.shields.io/badge/Microsoft_Edge-Add--ons-0078D7?style=flat-square" alt="Tampermonkey trên Edge Add-ons"></a>
+  <a href="https://apps.apple.com/app/tampermonkey/id1482490089"><img src="https://img.shields.io/badge/Safari-App_Store-006CFF?style=flat-square&logo=safari&logoColor=white" alt="Tampermonkey trên App Store"></a>
+  <a href="https://addons.opera.com/extensions/details/tampermonkey-beta/"><img src="https://img.shields.io/badge/Opera-Add--ons-FF1B2D?style=flat-square&logo=opera&logoColor=white" alt="Tampermonkey trên Opera Add-ons"></a>
+  <a href="https://violentmonkey.github.io/"><img src="https://img.shields.io/badge/Violentmonkey-Thay_thế-5E5CE6?style=flat-square&logo=javascript&logoColor=white" alt="Violentmonkey"></a>
+</p>
 
 ### Bước 2: Cài Userscript
 
-1. Mở trực tiếp **[fuo-reui.user.js (nhánh `main`)](https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js)**.
+<p>
+  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_ngay-fuo--reui.user.js_(v2.0.0)-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt fuo-reui.user.js"></a>
+</p>
+
+1. Bấm nút **Cài đặt ngay** ở trên để mở file userscript trên nhánh `main`.
 2. Khi Tampermonkey hiện trang cài đặt, bấm **Install** (hoặc **Update** nếu đã cài bản cũ).
 3. Tải lại bài viết FUOverflow đang mở (`https://fuoverflow.com/threads/...`) và cho phép tiện ích chạy trên `fuoverflow.com` nếu trình duyệt hỏi quyền.
 
-*Nếu trình duyệt chỉ mở trang mã nguồn thay vì trang cài đặt của Tampermonkey:* mở Dashboard Tampermonkey → **Create a new script**, thay nội dung mặc định bằng mã trong file [`fuo-reui.user.js`](./fuo-reui.user.js) rồi lưu (`Ctrl + S`). Tránh bật song song nhiều bản script cùng lúc.
+<details>
+<summary>Trình duyệt chỉ mở trang mã nguồn thay vì trang cài đặt Tampermonkey?</summary>
+
+Mở Dashboard Tampermonkey → **Create a new script**, thay nội dung mặc định bằng mã trong file [`fuo-reui.user.js`](./fuo-reui.user.js) rồi lưu (`Ctrl + S`). Tránh bật song song nhiều bản script cùng lúc.
+
+</details>
 
 ---
 

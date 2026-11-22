@@ -326,3 +326,62 @@ test('duplicate filename waits for the matching media sidebar',async({page})=>{
  });
  await expect(option(p,'A')).toBeEnabled();await option(p,'A').click();await expect(p).toContainText('Đúng · Nguồn');
 });
+
+test('keyboard shortcuts select options, submit, reset, star, toggle comments and ask AI',async({page})=>{
+ const p=await fixture(page,['AC'],{key:'k'});
+ await expect(p.locator('strong')).toContainText('Chọn nhiều');
+ await page.keyboard.press('1');
+ await page.keyboard.press('c');
+ await expect(option(p,'A')).toHaveAttribute('aria-pressed','true');
+ await expect(option(p,'C')).toHaveAttribute('aria-pressed','true');
+ await page.keyboard.press('Enter');
+ await expect(p).toContainText('Đúng · Nguồn');
+ await page.keyboard.press('s');
+ await expect(p.getByRole('button',{name:'★ Đã đánh dấu',exact:true})).toBeVisible();
+ await page.keyboard.press('c');
+ await expect(p.getByRole('button',{name:'Ẩn bình luận',exact:true})).toBeVisible();
+ await page.keyboard.press('e');
+ await expect(p.locator('.fuo-ai-result')).toContainText('Đáp án: A,C');
+ await page.keyboard.press('r');
+ await expect(option(p,'A')).toHaveAttribute('aria-pressed','false');
+});
+
+test('keyboard shortcuts stay inactive when settings dialog is open',async({page})=>{
+ const p=await fixture(page,['A'],{key:'k'});
+ await expect(option(p,'A')).toBeEnabled();
+ await p.getByRole('button',{name:'Cài đặt AI',exact:true}).click();
+ await expect(page.getByRole('dialog')).toBeVisible();
+ await page.keyboard.press('a');
+ await page.keyboard.press('s');
+ await page.keyboard.press('Escape');
+ await expect(option(p,'A')).toHaveAttribute('aria-pressed','false');
+ await expect(p.getByRole('button',{name:'☆ Đánh dấu',exact:true})).toBeVisible();
+});
+
+test('progress bar tracks accuracy and quick-jump switches to wrong or starred questions',async({page})=>{
+ const p=await fixture(page,['A']);
+ await page.evaluate(()=>{
+   const answers={ 'Q1.png':['A'], 'Q2.png':['B'], 'Q3.png':['C'] };
+   for(const name of ['Q1.png','Q2.png','Q3.png']){
+     const a=document.createElement('a');
+     a.href='/'+name; a.textContent=name; a.dataset.fancybox='exam';
+     a.addEventListener('click',e=>{ e.preventDefault(); setQuestion(name,answers[name]); });
+     document.body.append(a);
+   }
+   dispatchEvent(new Event('resize'));
+ });
+ await expect(p.locator('.fuo-progress')).toContainText('Tiến độ: 0/3');
+ await option(p,'B').click();
+ await expect(p.locator('.fuo-progress')).toContainText('Tiến độ: 1/3 · Đúng 0%');
+ await expect(p.getByRole('button',{name:'Câu sai (1)',exact:true})).toBeVisible();
+ await page.evaluate(()=>document.querySelector('a[href="/Q2.png"]').click());
+ await expect(p.locator('strong')).toContainText('Q2');
+ await option(p,'B').click();
+ await expect(p.locator('.fuo-progress')).toContainText('Tiến độ: 2/3 · Đúng 50%');
+ await p.getByRole('button',{name:'☆ Đánh dấu',exact:true}).click();
+ await expect(p.getByRole('button',{name:'Câu gắn sao (1)',exact:true})).toBeVisible();
+ await p.getByRole('button',{name:'Câu sai (1)',exact:true}).click();
+ await expect(p.locator('strong')).toContainText('Q1');
+ await p.getByRole('button',{name:'Câu gắn sao (1)',exact:true}).click();
+ await expect(p.locator('strong')).toContainText('Q2');
+});

@@ -1,7 +1,9 @@
 // ==UserScript==
 // @name         FUOverflow — Luyện đề
 // @namespace    fuoverflow-quiz-local
-// @version      2.0.0
+// @version      2.1.0
+// @updateURL    https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js
+// @downloadURL  https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js
 // @match        https://fuoverflow.com/threads/*
 // @grant        GM_addStyle
 // @grant        GM_getValue
@@ -89,7 +91,7 @@
       // Arbitrary names follow gallery order; numbered question names keep numeric order.
       const number = title.match(/^Q(\d+)/i)?.[1] || title.match(/\((\d+)\)\.[^.]+$/)?.[1];
       const key = questionKey(title, a.href);
-      if (!found.has(key)) found.set(key, { key, title, url: a.href, number: number ? Number(number) : found.size + 1 });
+      if (!found.has(key)) found.set(key, { key, title, url: a.href, link: a, number: number ? Number(number) : found.size + 1 });
     }
     catalog = found;
   }
@@ -209,6 +211,17 @@
     .fuo-models-status{font-size:12px;color:#a1a1aa;min-height:1.2em;overflow-wrap:anywhere}
     .fuo-settings-footer{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;padding-top:10px;border-top:1px solid #3f3f46}
     .fuo-settings-dialog [hidden]{display:none}
+    .fuo-progress{flex-basis:100%;display:flex;flex-direction:column;gap:6px;padding:8px 10px;background:#202023;border:1px solid #2e2e33;border-radius:8px;font-size:12px;color:#d4d4d8}
+    .fuo-progress[hidden]{display:none}
+    .fuo-progress-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px}
+    .fuo-progress-track{width:100%;height:5px;background:#27272a;border-radius:999px;overflow:hidden}
+    .fuo-progress-fill{height:100%;background:#22c55e;border-radius:999px;transition:width .2s ease}
+    .fuo-jump-row{display:flex;flex-wrap:wrap;gap:6px}
+    .fuo-quiz .fuo-jump-btn{min-height:28px;padding:2px 9px;font-size:12px;font-weight:600;border-radius:6px}
+    .fuo-quiz .fuo-jump-btn[data-kind=wrong]{background:#3f1d22;border-color:#991b1b;color:#fecaca}
+    .fuo-quiz .fuo-jump-btn[data-kind=wrong]:enabled:hover{background:#5c242b;border-color:#f87171}
+    .fuo-quiz .fuo-jump-btn[data-kind=starred]{background:#3b2f13;border-color:#854d0e;color:#fde68a}
+    .fuo-quiz .fuo-jump-btn[data-kind=starred]:enabled:hover{background:#524119;border-color:#facc15}
     @media(min-width:768px){.fancybox-show-sidebar .fancybox-sidebar:has(> .fuo-quiz:not([hidden])){width:420px;max-width:45vw}}
     @media(max-width:480px){.fuo-quiz{padding:12px}.fuo-quiz .fuo-ai-result{padding:14px}.fuo-settings-dialog{padding:14px;gap:10px}.fuo-settings-row>input,.fuo-settings-row>select{flex-basis:100%}.fuo-settings-row>button{flex:1 1 auto}.fuo-settings-footer{justify-content:stretch}.fuo-settings-footer>button{flex:1 1 0}}
     @keyframes fuo-reveal{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
@@ -1823,15 +1836,127 @@
     return null;
   }
 
+  function isEditableTarget(target) {
+    if (!(target instanceof HTMLElement)) return false;
+    return Boolean(target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]'));
+  }
+
+  function orderedReviewKeys(predicate) {
+    const matched = [];
+    const seen = new Set();
+    for (const [key] of catalog) {
+      const item = review.get(key);
+      if (item && predicate(item)) {
+        matched.push(key);
+        seen.add(key);
+      }
+    }
+    const extra = [];
+    for (const [key, item] of review) {
+      if (!seen.has(key) && item && predicate(item)) extra.push(key);
+    }
+    extra.sort((a, b) => (Number(a.match(/\d+/)?.[0]) || 0) - (Number(b.match(/\d+/)?.[0]) || 0));
+    return matched.concat(extra);
+  }
+
+  function computeProgress() {
+    const keys = new Set([...catalog.keys(), ...attempts.keys(), ...review.keys()]);
+    let answered = 0;
+    let right = 0;
+    for (const key of keys) {
+      const att = attempts.get(key);
+      const rev = review.get(key);
+      const answer = att?.answer || rev?.answer || '';
+      if (!answer) continue;
+      answered++;
+      const selected = att?.answer ? att.selected : (rev?.selected || '');
+      if (selected && selected === answer) right++;
+    }
+    const wrongKeys = orderedReviewKeys(item => Boolean(item.wrong));
+    const starredKeys = orderedReviewKeys(item => Boolean(item.starred));
+    return { total: catalog.size, answered, right, wrongKeys, starredKeys };
+  }
+
+  function jumpToQuestion(root, key) {
+    const entry = catalog.get(key);
+    const targetUrl = entry?.url || review.get(key)?.url || '';
+    const targetStable = targetUrl ? stableImageURL(targetUrl) : '';
+    const targetTitle = entry?.title || key.split(' | ')[0];
+
+    const fb = typeof window.Fancybox?.getInstance === 'function' ? window.Fancybox.getInstance() : null;
+    if (fb && typeof fb.jumpTo === 'function' && Array.isArray(fb.carousel?.slides)) {
+      const idx = fb.carousel.slides.findIndex(slide => {
+        const src = slide?.src || slide?.thumbSrc || '';
+        return (targetStable && stableImageURL(src) === targetStable)
+          || (slide?.caption && String(slide.caption).includes(targetTitle));
+      });
+      if (idx >= 0) {
+        fb.jumpTo(idx);
+        return true;
+      }
+    }
+
+    const catalogKeys = [...catalog.keys()];
+    const catalogIndex = catalogKeys.indexOf(key);
+    const thumbs = [...root.querySelectorAll('.fancybox__thumb, .f-thumbs__slide')];
+    if (catalogIndex >= 0 && thumbs[catalogIndex]) {
+      thumbs[catalogIndex].click();
+      return true;
+    }
+
+    if (entry?.link?.isConnected) {
+      entry.link.click();
+      return true;
+    }
+
+    const links = [...document.querySelectorAll('a[href]')].filter(a => !a.closest('.fancybox__container'));
+    const fallbackLink = links.find(a => {
+      const title = attachmentTitle(a);
+      return (title && questionKey(title, a.href) === key)
+        || (targetStable && stableImageURL(a.href) === targetStable);
+    });
+    if (fallbackLink) {
+      fallbackLink.click();
+      return true;
+    }
+    return false;
+  }
+
   function mount(root, sidebar) {
     const panel = document.createElement('section');
     panel.className = 'fuo-quiz';
     panel.setAttribute('aria-label', 'Trả lời câu hỏi');
     const title = document.createElement('strong');
+    const progressBox = document.createElement('div');
+    progressBox.className = 'fuo-progress';
+    const progressHead = document.createElement('div');
+    progressHead.className = 'fuo-progress-head';
+    const progressSummary = document.createElement('span');
+    const progressCounts = document.createElement('span');
+    progressHead.append(progressSummary, progressCounts);
+    const progressTrack = document.createElement('div');
+    progressTrack.className = 'fuo-progress-track';
+    const progressFill = document.createElement('div');
+    progressFill.className = 'fuo-progress-fill';
+    progressTrack.append(progressFill);
+    const jumpRow = document.createElement('div');
+    jumpRow.className = 'fuo-jump-row';
+    const jumpWrongBtn = document.createElement('button');
+    jumpWrongBtn.type = 'button';
+    jumpWrongBtn.className = 'fuo-jump-btn';
+    jumpWrongBtn.dataset.kind = 'wrong';
+    const jumpStarredBtn = document.createElement('button');
+    jumpStarredBtn.type = 'button';
+    jumpStarredBtn.className = 'fuo-jump-btn';
+    jumpStarredBtn.dataset.kind = 'starred';
+    jumpRow.append(jumpWrongBtn, jumpStarredBtn);
+    progressBox.append(progressHead, progressTrack, jumpRow);
     const status = document.createElement('div');
     status.setAttribute('role', 'status');
     const comments = document.createElement('button');
+    comments.title = 'Hiện / Ẩn bình luận (C)';
     const reset = document.createElement('button');
+    reset.title = 'Làm lại câu hiện tại (R)';
     const star = document.createElement('button');
     star.type = 'button';
     const exportButton = document.createElement('button');
@@ -1855,6 +1980,7 @@
     ai.className = 'fuo-ai-trigger';
     ai.type = 'button';
     ai.textContent = 'Xem đáp án AI';
+    ai.title = 'Xem đáp án và lời giải AI (E)';
     const aiSettings = document.createElement('button');
     aiSettings.className = 'fuo-ai-settings-btn';
     aiSettings.type = 'button';
@@ -1869,6 +1995,7 @@
     const submit = document.createElement('button');
     submit.type = 'button';
     submit.textContent = 'Submit';
+    submit.title = 'Nộp đáp án đã chọn (Enter)';
     submit.onclick = () => grade();
     const retry = document.createElement('button');
     retry.type = 'button';
@@ -1910,10 +2037,70 @@
       return button;
     });
 
+    function nextJumpTarget(list) {
+      if (!list.length) return '';
+      if (!question) return list[0];
+      const idx = list.indexOf(question.key);
+      if (idx === -1) return list[0];
+      return list.length > 1 ? list[(idx + 1) % list.length] : list[0];
+    }
+
+    function handleJump(list) {
+      if (!state) return;
+      const targetKey = nextJumpTarget(list);
+      if (!targetKey) return;
+      if (question && targetKey === question.key && list.length === 1) {
+        state.message = 'Bạn đang ở câu duy nhất trong danh sách này.';
+        render();
+        return;
+      }
+      if (!jumpToQuestion(root, targetKey)) {
+        const label = (catalog.get(targetKey)?.title || targetKey.split(' | ')[0]).replace(/\.[^.]+$/, '');
+        state.message = 'Không tìm thấy slide của ' + label + ' trong thư viện ảnh hiện tại.';
+        render();
+      }
+    }
+
+    let currentWrongKeys = [];
+    let currentStarredKeys = [];
+    jumpWrongBtn.onclick = () => handleJump(currentWrongKeys);
+    jumpStarredBtn.onclick = () => handleJump(currentStarredKeys);
+
+    function renderProgress() {
+      const stats = computeProgress();
+      currentWrongKeys = stats.wrongKeys;
+      currentStarredKeys = stats.starredKeys;
+      const hasAny = stats.total > 0 || stats.answered > 0 || stats.wrongKeys.length > 0 || stats.starredKeys.length > 0;
+      progressBox.hidden = !state || !hasAny;
+      if (progressBox.hidden) return;
+      const accuracy = stats.answered > 0 ? Math.round(stats.right / stats.answered * 100) : null;
+      const headText = stats.total > 0
+        ? 'Tiến độ: ' + stats.answered + '/' + stats.total
+        : 'Đã làm: ' + stats.answered;
+      progressSummary.textContent = accuracy === null ? headText : headText + ' · Đúng ' + accuracy + '%';
+      const rightParts = [];
+      if (stats.wrongKeys.length > 0) rightParts.push('Sai: ' + stats.wrongKeys.length);
+      if (stats.starredKeys.length > 0) rightParts.push('★ ' + stats.starredKeys.length);
+      progressCounts.textContent = rightParts.join(' · ');
+      progressTrack.hidden = stats.total === 0;
+      if (stats.total > 0) {
+        const pct = Math.min(100, Math.round(stats.answered / stats.total * 100));
+        progressFill.style.width = pct + '%';
+      }
+      jumpWrongBtn.hidden = stats.wrongKeys.length === 0;
+      jumpWrongBtn.textContent = 'Câu sai (' + stats.wrongKeys.length + ')';
+      jumpWrongBtn.title = 'Nhảy tới câu đã làm sai tiếp theo';
+      jumpStarredBtn.hidden = stats.starredKeys.length === 0;
+      jumpStarredBtn.textContent = 'Câu gắn sao (' + stats.starredKeys.length + ')';
+      jumpStarredBtn.title = 'Nhảy tới câu đã đánh dấu tiếp theo';
+      jumpRow.hidden = jumpWrongBtn.hidden && jumpStarredBtn.hidden;
+    }
+
     function render() {
       panel.hidden = !state;
       if (!state) return;
       title.textContent = question.title.replace(/\.[^.]+$/, '') + (state.type ? (state.type === 'multiple' ? ' · Chọn nhiều đáp án' : ' · Chọn một đáp án') : ' · Đang phân loại');
+      renderProgress();
       submit.hidden = state.type !== 'multiple';
       submit.disabled = Boolean(!state.selected || state.busy || state.aiBusy || state.answer);
       retry.hidden = !state.typeError;
@@ -1948,7 +2135,7 @@
       const starred = Boolean(review.get(question.key)?.starred);
       star.textContent = starred ? '★ Đã đánh dấu' : '☆ Đánh dấu';
       star.setAttribute('aria-pressed', String(starred));
-      star.title = 'Đánh dấu câu nghi vấn để ôn lại';
+      star.title = 'Đánh dấu câu nghi vấn để ôn lại (S)';
       reset.disabled = state.busy || state.aiBusy || !state.selected;
       ai.disabled = Boolean(state.busy || state.aiBusy);
       ai.textContent = state.aiBusy ? 'Đang hỏi ' + getActiveProvider().name + '…' : 'Xem đáp án AI';
@@ -2118,8 +2305,58 @@
 
     panel.hidden = true;
     options.append(...buttons);
-    panel.append(title, options, submit, retry, reset, comments, ai, aiSettings, star, exportButton, status, distribution, aiResult);
+    panel.append(title, progressBox, options, submit, retry, reset, comments, ai, aiSettings, star, exportButton, status, distribution, aiResult);
     sidebar.prepend(panel);
+
+    function onQuizKeyDown(event) {
+      if (!panel.isConnected) {
+        document.removeEventListener('keydown', onQuizKeyDown);
+        return;
+      }
+      if (panel.hidden || !state || document.querySelector('.fuo-settings-backdrop')) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isEditableTarget(event.target)) return;
+      const key = event.key;
+      if (!key) return;
+      if (key === 'Enter') {
+        if (!submit.hidden && !submit.disabled && !(event.target instanceof HTMLElement && event.target.closest('button, a, [role="button"]'))) {
+          event.preventDefault();
+          submit.click();
+        }
+        return;
+      }
+      if (key.length !== 1) return;
+      const upper = key.toUpperCase();
+      const letterIdx = letters.indexOf(upper);
+      if (letterIdx !== -1 && !buttons[letterIdx].disabled) {
+        event.preventDefault();
+        buttons[letterIdx].click();
+        return;
+      }
+      if (upper >= '1' && upper <= '8') {
+        const idx = Number(upper) - 1;
+        if (!buttons[idx].disabled) {
+          event.preventDefault();
+          buttons[idx].click();
+        }
+        return;
+      }
+      if (upper === 'R' && !reset.disabled) {
+        event.preventDefault();
+        reset.click();
+      } else if (upper === 'S') {
+        event.preventDefault();
+        star.click();
+      } else if (upper === 'M' || (upper === 'C' && buttons[2].disabled)) {
+        event.preventDefault();
+        comments.click();
+      } else if ((upper === 'I' || (upper === 'E' && buttons[4].disabled)) && !ai.disabled) {
+        event.preventDefault();
+        ai.click();
+      }
+    }
+    document.addEventListener('keydown', onQuizKeyDown);
+
     function onAIConfigChange() {
       if (!panel.isConnected) {
         aiConfigListeners.delete(onAIConfigChange);
@@ -2142,6 +2379,7 @@
         const visible = Boolean(showComments && question &&
           content?.querySelector('.xfmgInfoBlock-title h2')?.textContent.trim() === question.title);
         content?.classList.toggle('fuo-comments-visible', visible);
+        renderProgress();
         return;
       }
       question = next;

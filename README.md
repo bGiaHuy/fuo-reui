@@ -12,10 +12,10 @@
 </p>
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_Userscript-v2.0.0-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt Userscript"></a>
-  <a href="#10-thông-tin-cho-người-đóng-góp"><img src="https://img.shields.io/badge/Playwright-108_Passed-brightgreen?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright Test Suite"></a>
+  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_Userscript-v2.1.0-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt Userscript"></a>
+  <a href="https://github.com/bGiaHuy/fuo-reui/actions"><img src="https://img.shields.io/badge/Playwright-114_Passed-brightgreen?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright Test Suite"></a>
   <a href="#8-giới-hạn-và-tích-hợp"><img src="https://img.shields.io/badge/AI_BYOK-DeepSeek_|_OpenAI_|_Claude_|_Gemini_|_Ollama-blueviolet?style=for-the-badge" alt="AI Multi-provider"></a>
-  <a href="#11-credits-và-license"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License MIT"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License MIT"></a>
 </p>
 
 ---
@@ -90,7 +90,7 @@ Người dùng chỉ cần trình duyệt có Tampermonkey. Node.js và Python c
 ### Bước 2: Cài Userscript
 
 <p>
-  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_ngay-fuo--reui.user.js_(v2.0.0)-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt fuo-reui.user.js"></a>
+  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_ngay-fuo--reui.user.js_(v2.1.0)-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt fuo-reui.user.js"></a>
 </p>
 
 1. Bấm nút **Cài đặt ngay** ở trên để mở file userscript trên nhánh `main`.
@@ -111,8 +111,8 @@ Mở Dashboard Tampermonkey → **Create a new script**, thay nội dung mặc �
 | Tiêu chí | Chi tiết |
 | :--- | :--- |
 | **Nền tảng hỗ trợ** | Chrome, Edge, Brave, Firefox, Safari, Opera thông qua **Tampermonkey** hoặc **Violentmonkey**. |
-| **Trạng thái** | **v2.0.0** — đã kiểm thử với **108 ca Playwright** cho cả desktop (`1280×800`) và mobile (`390×844`). |
-| **License** | Mã nguồn mở theo **MIT License**. |
+| **Trạng thái** | **v2.1.0** — hỗ trợ tự kiểm tra cập nhật qua Tampermonkey, đã kiểm thử với **114 ca Playwright** cho cả desktop (`1280×800`) và mobile (`390×844`). |
+| **License** | Mã nguồn mở theo **[MIT License](./LICENSE)**. |
 | **Link bản mới nhất** | [`fuo-reui.user.js` trên nhánh `main`](https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js). |
 
 ---
@@ -137,6 +137,7 @@ FUO reUI chèn bảng trả lời vào thanh bên của Fancybox và mặc đị
 - **Lời giải AI (BYOK đa nhà cung cấp):** Hỗ trợ sẵn 5 preset (`DeepSeek`, `OpenAI`, `Anthropic Claude`, `Google Gemini`, `OpenRouter`) và tối đa `20` hồ sơ tùy chỉnh; cho tải `/models`, chỉnh mức `Thinking` và hiển thị công thức toán bằng KaTeX.
 - **Hỗ trợ Local LLM:** Kết nối trực tiếp Ollama (`http://localhost:11434/v1`) hoặc LM Studio (`http://localhost:1234/v1`) mà không cần API key.
 - **Đánh dấu câu cần ôn & xuất CSV:** Lưu lịch sử câu sai và câu gắn sao (`☆ Đánh dấu`) theo từng bài viết; xuất file `<tên đề>_cau-can-on.csv`.
+- **Thanh tiến độ, nhảy nhanh & phím tắt:** Hiển thị số câu đã làm, tỷ lệ đúng và nút nhảy trực tiếp tới **Câu sai** / **Câu gắn sao** ngay trên bảng, kèm phím tắt bàn phím cho toàn bộ thao tác chính.
 
 ---
 
@@ -164,6 +165,20 @@ flowchart LR
 - **`Cài đặt AI`**: Mở hộp thoại chọn nhà cung cấp, chỉnh Base URL, loại tương thích, đặt API key, tải danh sách `/models` và chọn mức `Thinking`.
 - **`☆ Đánh dấu` / `★ Đã đánh dấu`**: Gắn hoặc bỏ dấu sao cho câu muốn ôn lại.
 - **`Xuất CSV`**: Tải file `<tên đề>_cau-can-on.csv` chứa các câu đã sai hoặc được đánh dấu của đề hiện tại.
+- **`Câu sai (N)` / `Câu gắn sao (N)`**: Hiện ngay dưới thanh tiến độ khi đã có câu sai hoặc câu gắn sao; bấm để nhảy nhanh qua từng câu cần xem lại.
+
+### Phím tắt bàn phím
+
+| Phím | Thao tác |
+| :--- | :--- |
+| `A`–`H` hoặc `1`–`8` | Chọn phương án `A`–`H` (khi câu hỏi chưa chấm) |
+| `Enter` | Nộp đáp án (**Submit**) với câu chọn nhiều |
+| `R` | **Làm lại** câu hiện tại |
+| `S` | Gắn hoặc bỏ **Đánh dấu sao** |
+| `M` (hoặc `C` sau khi chấm) | **Hiện / Ẩn bình luận** |
+| `I` (hoặc `E` sau khi chấm) | **Xem đáp án AI** |
+
+*(Phím tắt tự tắt khi đang mở hộp thoại **Cài đặt AI** hoặc khi con trỏ nằm trong ô nhập chữ.)*
 
 *(Để xóa lịch sử làm bài và dấu sao của đề đang mở, vào menu Tampermonkey → **Bắt đầu lượt luyện đề mới**.)*
 
@@ -194,7 +209,7 @@ flowchart LR
 ## 10. Thông tin cho người đóng góp
 
 - **Công nghệ:** JavaScript thuần trong một file duy nhất [`fuo-reui.user.js`](./fuo-reui.user.js) (không cần bước build), Tampermonkey API (`GM_*`), Tesseract.js `5.1.1`, KaTeX `0.19.1`, Playwright `1.56.1`.
-- **Chạy kiểm thử tự động (108 ca trên Desktop và Mobile):**
+- **Chạy kiểm thử tự động (114 ca trên Desktop và Mobile):**
   ```sh
   git clone https://github.com/bGiaHuy/fuo-reui.git
   cd fuo-reui
@@ -234,4 +249,4 @@ flowchart LR
 
 ### License
 
-Phát hành theo **MIT License**.
+Phát hành theo **[MIT License](./LICENSE)**.

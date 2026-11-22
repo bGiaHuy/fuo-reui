@@ -1,206 +1,177 @@
-# FUO reUI — FUOverflow Practice Quiz Userscript
+# FUO reUI
 
-<p align="center">
-  <a href="./docs/images/fuo-reui-demo.png">
-    <img src="./docs/images/fuo-reui-demo.png" alt="FUO reUI — Trắc nghiệm trực tiếp trên ảnh FUOverflow" width="900" style="border-radius: 8px; border: 1px solid #3f3f46;" />
-  </a>
+**Luyện đề trắc nghiệm ngay trên ảnh bài đăng FUOverflow — ẩn bình luận để tự làm, bấm A–H chấm tức thì theo cộng đồng hoặc AI, xuất câu sai ra CSV ôn lại trước giờ thi.**
+
+Userscript dành cho sinh viên FPT và người dùng [FUOverflow](https://fuoverflow.com/) luyện đề từ các bài tổng hợp ảnh trên diễn đàn mà không phải vừa nhìn ảnh vừa che bình luận.
+
+<p align="left">
+  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_userscript-v2.0.0-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài userscript v2.0.0"></a>
+  <a href="#cài-đặt"><img src="https://img.shields.io/badge/Trình_duyệt-Chrome_%7C_Edge_%7C_Firefox_%7C_Safari-2563EB?style=for-the-badge" alt="Trình duyệt hỗ trợ"></a>
+  <a href="#phát-triển-và-đóng-góp"><img src="https://img.shields.io/badge/Playwright-108_passed-16A34A?style=for-the-badge&logo=playwright&logoColor=white" alt="108 Playwright tests passed"></a>
+  <img src="https://img.shields.io/badge/Target-fuoverflow.com-EA580C?style=for-the-badge" alt="Target fuoverflow.com">
 </p>
 
-<p align="center">
-  <strong>Biến diễn đàn FUOverflow thành phòng luyện đề trắc nghiệm chuẩn thi thực chiến.</strong><br>
-  <em>Dành riêng cho sinh viên Đại học FPT: Tạm biệt việc vừa soi ảnh vừa kéo comment dò đáp án. Trả lời ngay trên thanh bên, tự động chấm theo bình luận cộng đồng và giải thích chi tiết cùng AI.</em>
-</p>
+![Giao diện FUO reUI đang chấm câu hỏi CEA201 trên FUOverflow](./docs/images/fuo-reui-demo.png)
 
-<p align="center">
-  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_Userscript-v2.0.0-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt Userscript"></a>
-  <a href="https://github.com/bGiaHuy/fuo-reui/actions"><img src="https://img.shields.io/badge/Playwright-108_Passed-brightgreen?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright Test Suite"></a>
-  <a href="#8-giới-hạn-và-tích-hợp"><img src="https://img.shields.io/badge/AI_BYOK-DeepSeek_|_OpenAI_|_Claude_|_Gemini_|_Ollama-blueviolet?style=for-the-badge" alt="AI Multi-provider"></a>
-  <a href="#11-credits-và-licence"><img src="https://img.shields.io/badge/licence-MIT-green?style=for-the-badge" alt="License MIT"></a>
-</p>
+*Ảnh chụp thực tế khi luyện đề CEA201 trên FUOverflow: bảng nút `A–H` gắn ngay thanh bên Fancybox, báo lựa chọn sai (`B ✗`) và đáp án đúng (`D ✓`) theo bình luận, kèm lời giải tham khảo từ DeepSeek. Từ bản `2.0.0`, bảng có thêm nút **Cài đặt AI** để đổi nhà cung cấp, model và mức suy nghĩ.*
 
 ---
 
-## 📑 Mục lục
+## Cài đặt
 
-1. [Mở đầu bắt mắt](#1-mở-đầu-bắt-mắt)
-2. [Bằng chứng trực quan](#2-bằng-chứng-trực-quan)
-3. [Dấu hiệu tin cậy](#3-dấu-hiệu-tin-cậy)
-4. [Giới thiệu ngắn](#4-giới-thiệu-ngắn)
-5. [Tính năng chính](#5-tính-năng-chính)
-6. [Cách bắt đầu (Cài đặt trong 1 phút)](#6-cách-bắt-đầu-cài-đặt-trong-1-phút)
-7. [Cách sử dụng](#7-cách-sử-dụng)
-8. [Giới hạn và tích hợp](#8-giới-hạn-và-tích-hợp)
-9. [Dữ liệu và quyền riêng tư](#9-dữ-liệu-và-quyền-riêng-tư)
-10. [Thông tin cho người đóng góp](#10-thông-tin-cho-người-đóng-góp)
-11. [Credits và licence](#11-credits-và-licence)
+Người dùng cuối chỉ cần trình duyệt có Tampermonkey. Node.js và Python chỉ dùng khi phát triển hoặc chạy test.
 
----
+### Bước 1: Cài Tampermonkey
 
-## 1. Mở đầu bắt mắt
+- **Khuyên dùng (Chrome, Edge, Brave, Cốc Cốc, Arc):** cài [Tampermonkey trên Chrome Web Store](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo). Trên trình duyệt nhân Chromium bản mới, mở `chrome://extensions` (hoặc trang quản lý tiện ích của trình duyệt) và bật **Developer mode** / quyền chạy userscript nếu Tampermonkey yêu cầu.
+- **Lựa chọn thay thế cho trình duyệt hoặc tiện ích khác:**
+  - Firefox: [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/tampermonkey/)
+  - Microsoft Edge (store riêng): [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd)
+  - Safari: [Mac App Store](https://apps.apple.com/app/tampermonkey/id1482490089)
+  - Opera: [Opera Add-ons](https://addons.opera.com/extensions/details/tampermonkey-beta/)
+  - Trình quản lý userscript thay thế: [Violentmonkey](https://violentmonkey.github.io/)
 
-- **Tên dự án:** **FUO reUI** (*FUOverflow Practice Quiz Userscript*)
-- **Dành cho ai:** Sinh viên Đại học FPT (và người dùng diễn đàn FUOverflow) đang ôn luyện các môn thi trắc nghiệm FE/PE (CEA201, PRF192, PRO192, CSI104, OSG202, NWC203, MAS291,...).
-- **Giải quyết việc gì:** Loại bỏ hoàn toàn sự ức chế khi phải lướt qua lại giữa album ảnh đề thi và khu vực bình luận để tự mò đáp án. Script tích hợp bảng chọn phương án trực tiếp vào giao diện trình xem ảnh, tự động chấm điểm theo số đông bình luận và gọi AI phân tích sâu từng câu hỏi.
+### Bước 2: Cài userscript
 
----
+1. Mở trực tiếp **[fuo-reui.user.js (nhánh `main`)](https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js)**.
+2. Khi Tampermonkey mở trang cài đặt, bấm **Install** (hoặc **Update** nếu đã cài bản cũ).
+3. Tải lại bài viết FUOverflow đang mở và cho phép tiện ích chạy trên `fuoverflow.com` nếu trình duyệt hỏi quyền.
 
-## 2. Bằng chứng trực quan
+*Nếu trình duyệt chỉ mở trang chữ mã nguồn thay vì giao diện Tampermonkey:* mở Dashboard Tampermonkey → **Create a new script**, thay toàn bộ nội dung mặc định bằng mã trong file [`fuo-reui.user.js`](./fuo-reui.user.js) rồi lưu (`Ctrl + S`). Tránh bật song song nhiều bản script cùng lúc.
 
-Ảnh chụp màn hình thực tế khi đang luyện đề môn **CEA201 (Computer Organization and Architecture)** trên diễn đàn FUOverflow:
-
-<p align="center">
-  <img src="./docs/images/fuo-reui-demo.png" alt="Ảnh chụp thực tế FUO reUI đang chấm câu hỏi CEA201" width="900" style="border-radius: 8px; border: 1px solid #3f3f46;" />
-</p>
-
-> **Chú thích hình ảnh thực tế:**
-> 1. **Bên trái (Ảnh đề thi):** Câu hỏi trắc nghiệm tiếng Anh hiển thị nguyên bản trong popup Fancybox.
-> 2. **Góc trên bên phải (Bảng trả lời):** Hàng nút bấm chọn đáp án từ `A` đến `H`. Trong ảnh: Người dùng chọn `B` (báo đỏ $\times$ vì sai), hệ thống tự động nhận diện và làm nổi bật đáp án đúng `D` (báo xanh $\checkmark$).
-> 3. **Dòng trạng thái đồng thuận:** Báo `Sai - Nguồn 1 bình luận`, tỷ lệ đồng thuận bình luận `D: 100%`.
-> 4. **Khung giải thích AI (DeepSeek):** Phân tích rõ ràng tại sao phương án `D` là đặc tính cốt lõi của hệ thống phân cấp (*hierarchical system*), đồng thời chỉ rõ lỗi sai của từng phương án `A`, `B` và `C`.
-
-*(Hỗ trợ cả chế độ **Chọn nhiều đáp án** với nút `Submit` riêng biệt khi gặp câu hỏi dạng multi-choice).*
+**Trạng thái dự án:** bản hiện tại là `v2.0.0`, phát hành trực tiếp trên nhánh `main` (chưa đóng gói GitHub Release riêng), đã kiểm thử `108` ca Playwright cho cả desktop và mobile.
 
 ---
 
-## 3. Dấu hiệu tin cậy
+## Vấn đề giải quyết
 
-| Tiêu chí | Thông tin kiểm chứng |
-| :--- | :--- |
-| **Nền tảng hỗ trợ** | Hoạt động trên mọi trình duyệt hiện đại (Chrome, Edge, Firefox, Brave, Safari, Opera) thông qua **Tampermonkey** hoặc **Violentmonkey**. |
-| **Trạng thái dự án** | **v2.0.0** — Hoạt động ổn định, bộ kiểm thử tự động gồm **108 bài test Playwright** chạy thông suốt trên cả Desktop và Mobile. |
-| **licence** | Mã nguồn mở hoàn toàn theo chuẩn **MIT License**. |
-| **Link cài đặt bản mới nhất** | [`fuo-reui.user.js` trên nhánh `main`](https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js). |
+Đề thi trên FUOverflow thường được đăng thành album ảnh trong trình xem Fancybox. Khi ôn trực tiếp trên diễn đàn, bình luận đáp án nằm ngay cạnh ảnh nên dễ nhìn thấy trước khi kịp nghĩ; gặp câu nhiều người chọn khác nhau thì phải lướt từng bình luận để tự tính số đông; làm hết đề cũng không có danh sách câu đã sai để xem lại.
+
+FUO reUI chèn bảng trả lời trực tiếp vào thanh bên của Fancybox và mặc định ẩn phần bình luận. Bạn chọn đáp án ngay trên ảnh, xem chấm điểm tức thì theo phiếu cộng đồng hoặc AI, rồi tải toàn bộ câu sai và câu đánh dấu ra CSV để ôn lại.
 
 ---
 
-## 4. Giới thiệu ngắn
+## Tính năng chính
 
-Khi ôn thi trắc nghiệm trên FUOverflow, sinh viên thường vấp phải 3 rào cản lớn:
-1. **Dễ lộ đáp án:** Vừa mở ảnh lên là bình luận bên dưới đập ngay vào mắt, làm mất khả năng tự tư duy và phản xạ phòng thi.
-2. **Bình luận gây nhiễu:** Người bảo A, người bảo B, tranh cãi kéo dài mà không có người chốt đáp án chuẩn xác.
-3. **Không lưu được lỗi sai:** Làm xong một đề 50 câu, không nhớ mình đã sai những câu nào để ôn lại trước ngày thi.
-
-**FUO reUI là lời giải trọn vẹn:** Tiện ích ẩn bình luận đi để bạn tự chọn đáp án; ngay khi chọn xong, thuật toán sẽ tự kiểm tra xem số đông bình luận chọn gì để chấm cho bạn. Nếu bình luận thiếu hoặc tranh cãi, trợ lý AI sẽ lập tức nhảy vào giải thích chi tiết từng ngóc ngách. Cuối buổi, bạn chỉ cần bấm **Xuất CSV** là có ngay danh sách câu sai để nhét vào Anki hoặc Excel.
-
----
-
-## 5. Tính năng chính
-
-- 🎯 **Luyện đề trực tiếp trên ảnh:** Giao diện nút bấm A–H tối giản, bám sát thanh bên Fancybox, không che khuất nội dung đề thi. Tự động hỗ trợ cả câu chọn 1 đáp án và câu chọn nhiều đáp án (*Multi-choice Submit*).
-- ⚡ **Chấm điểm theo đồng thuận cộng đồng (Plurality Voting):** Đọc bình luận thực tế, lọc bỏ quote/trích dẫn, tính mỗi tác giả 1 phiếu và lấy tập đáp án chiếm đa số làm căn cứ chấm điểm.
-- 🔍 **Nhận diện loại câu hỏi qua OCR:** Nếu bình luận chưa ai làm, thư viện Tesseract.js tích hợp sẵn sẽ tự đọc ảnh để phân loại câu hỏi (chọn 1 hay chọn tất cả).
-- 🤖 **Trợ lý giải đề AI (BYOK đa nhà cung cấp):** Kết nối trực tiếp tới DeepSeek, OpenAI (GPT-4o/mini), Anthropic Claude, Google Gemini hoặc OpenRouter để giải thích chi tiết bằng tiếng Việt kèm công thức Toán/Lý KaTeX sắc nét.
-- 💻 **Hỗ trợ Local LLM (Chạy AI không tốn tiền):** Kết nối mượt mà tới Ollama hoặc LM Studio qua `localhost` mà không cần API key.
-- 📁 **Quản lý câu hỏi & Xuất CSV ôn tập:** Đánh dấu câu khó (☆/★), tự động lưu lịch sử các câu làm sai và xuất file CSV chuẩn cấu trúc chỉ với 1 cú click.
+| Hạng mục | FUO reUI xử lý |
+| --- | --- |
+| Chọn đáp án ngay trong ảnh | Bảng nút `A–H` gắn cố định vào thanh bên Fancybox. Câu chọn một chấm ngay khi bấm; câu chọn nhiều cho phép chọn nhiều phương án rồi bấm **Submit** (chỉ tính đúng khi khớp cả tập đáp án). |
+| Ẩn bình luận mặc định | Che khu vực bình luận của ảnh đang mở để tránh lộ đáp án; bấm **Hiện bình luận** khi cần đọc thảo luận. |
+| Chấm theo đồng thuận & OCR | Đếm tối đa một phiếu hợp lệ cho mỗi tác giả (bỏ phần trích dẫn) và lấy tập đáp án có nhiều phiếu nhất. Nếu chưa có phiếu hợp lệ, Tesseract.js (`eng+vie`) đọc ảnh để phân biệt câu chọn một hay chọn nhiều. |
+| Lời giải AI (BYOK đa nhà cung cấp) | Gọi AI giải thích bằng tiếng Việt và hiển thị công thức toán bằng KaTeX. Tích hợp sẵn 5 preset (`DeepSeek`, `OpenAI`, `Anthropic Claude`, `Google Gemini`, `OpenRouter`), cho thêm tối đa `20` hồ sơ tùy chỉnh, tải `/models`, chỉnh `Thinking` và gọi endpoint HTTP cục bộ (`Ollama`, `LM Studio`). |
+| Nhận diện ảnh linh hoạt | Nhận tên ảnh tùy ý như `Q1.png`, `Q27_91_20250804144948.webp`, `CEA201_SP26_FE (7).webp`; xử lý URL có tham số ký thay đổi và tách riêng các ảnh trùng tên trong cùng một đề. |
+| Lưu câu cần ôn & xuất CSV | Lưu lịch sử câu sai và câu gắn sao (`☆ Đánh dấu`) theo từng bài viết; xuất file `<tên đề>_cau-can-on.csv` dùng được trong Excel, Google Sheets hoặc nhập sang Anki. |
 
 ---
 
-## 6. Cách bắt đầu (Cài đặt trong 1 phút)
+## Cách sử dụng
 
-### Yêu cầu tiên quyết
-Bạn chỉ cần cài tiện ích **Tampermonkey** trên trình duyệt của mình:
+1. Mở bài viết chứa đề thi tại `https://fuoverflow.com/threads/...`.
+2. Bấm vào một ảnh câu hỏi để mở Fancybox (mở thanh thông tin/bình luận bên cạnh nếu đang ẩn).
+3. Chờ bảng **Trả lời câu hỏi** phân loại xong (`Chọn một đáp án` hoặc `Chọn nhiều đáp án`), sau đó chọn phương án `A–H` (với câu chọn nhiều, bấm thêm **Submit**).
+4. Đọc kết quả `Đúng / Sai`, nguồn đáp án và tỷ lệ bình luận, rồi chuyển sang ảnh tiếp theo.
 
-| Trình duyệt | Link cài đặt Tampermonkey |
-| :--- | :--- |
-| **Chrome / Brave** | [Chrome Web Store](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo) *(Lưu ý: Bật "Developer mode" tại `chrome://extensions` nếu Chrome yêu cầu)* |
-| **Mozilla Firefox** | [Firefox Add-ons (AMO)](https://addons.mozilla.org/firefox/addon/tampermonkey/) |
-| **Microsoft Edge** | [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd) |
-| **Mọi trình duyệt khác** | [Tampermonkey Homepage](https://www.tampermonkey.net/) hoặc [Violentmonkey](https://violentmonkey.github.io/) |
+### Các nút trên bảng
 
-### Cài đặt Userscript
-1. Bấm vào liên kết cài đặt: 👉 **[Cài đặt fuo-reui.user.js](https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js)**.
-2. Trình duyệt sẽ mở ra trang cài đặt của Tampermonkey → Nhấn **Install** (hoặc **Cài đặt**).
-3. Mở bài viết đề thi bất kỳ trên FUOverflow (ví dụ: `https://fuoverflow.com/threads/...`) và bắt đầu luyện!
+| Nút | Chức năng |
+| --- | --- |
+| **Làm lại** | Xóa lựa chọn và kết quả đang hiện của câu hiện tại để chọn lại; vẫn giữ phân loại, dấu sao và lịch sử câu đã từng sai. |
+| **Hiện bình luận / Ẩn bình luận** | Bật hoặc tắt bình luận của ảnh đang xem. |
+| **Xem đáp án AI** | Gọi nhà cung cấp AI đang chọn để lấy đáp án tham khảo và lời giải tiếng Việt; riêng nút này không chấm câu hỏi. |
+| **Cài đặt AI** | Mở hộp thoại **Cài đặt AI (BYOK)** để chọn nhà cung cấp, chỉnh Base URL, loại tương thích, model và mức suy nghĩ. |
+| **☆ Đánh dấu / ★ Đã đánh dấu** | Gắn hoặc bỏ dấu sao cho câu cần ôn lại. |
+| **Xuất CSV** | Tải danh sách câu đã sai hoặc được đánh dấu của đề hiện tại. |
+| **Thử lại phân loại** | Chạy lại bước đọc bình luận hoặc OCR khi mạng lỗi; các nút đáp án bị khóa cho đến khi phân loại xong. |
+
+### Cấu hình AI nhanh (tùy chọn)
+
+Chấm theo bình luận không cần cài AI. Nếu muốn dùng giải thích AI hoặc tự động chấm khi bình luận chưa có / hòa phiếu:
+
+1. Bấm **Cài đặt AI** trên bảng (hoặc menu Tampermonkey → **Cấu hình AI (BYOK / Model / Thinking)**).
+2. Chọn một trong 5 preset sẵn có (`DeepSeek` mặc định, `OpenAI`, `Anthropic Claude`, `Google Gemini`, `OpenRouter`) hoặc bấm **+ Tùy chỉnh** để tự khai báo endpoint tương thích `openai`, `deepseek`, `anthropic`, `gemini`.
+3. Bấm **Đặt / đổi API key** để nhập key. Nếu dùng mô hình chạy cục bộ như Ollama (`http://localhost:11434/v1`) hoặc LM Studio (`http://localhost:1234/v1`), API key không bắt buộc.
+4. Nhập Model ID hoặc bấm **Tải danh sách (/models)** (ô **Lọc model…** tự hiện khi danh sách vượt quá `10` model), chọn mức **Thinking** (`default`, `off`, `low`, `medium`, `high`) rồi bấm **Lưu cấu hình**.
+
+Để xóa kết quả và dấu sao của riêng đề đang mở và làm lại từ đầu, chọn menu Tampermonkey → **Bắt đầu lượt luyện đề mới**.
 
 ---
 
-## 7. Cách sử dụng
+## Giới hạn và tích hợp
 
-```mermaid
-flowchart LR
-    A["Mở bài viết đề thi trên FUOverflow"] --> B["Bấm vào ảnh câu hỏi để mở Fancybox"]
-    B --> C["Bảng nút bấm A-H xuất hiện ở thanh bên"]
-    C --> D{"Loại câu hỏi?"}
-    D -- "Chọn 1 đáp án" --> E["Bấm nút A-H → Chấm điểm ngay"]
-    D -- "Chọn nhiều đáp án" --> F["Chọn các phương án → Bấm Submit"]
-    E --> G["Xem kết quả Đúng/Sai & Tỷ lệ bình luận"]
-    F --> G
-    G --> H["Bấm 'Xem đáp án AI' nếu cần lời giải"]
-    G --> I["Bấm '☆ Đánh dấu' cho câu cần ôn"]
-    G --> J["Bấm 'Xuất CSV' tải danh sách câu sai"]
+- **Phạm vi trang:** chỉ chạy trên `https://fuoverflow.com/threads/*` dựa trên cấu trúc Fancybox hiện tại của FUOverflow; không hỗ trợ các trang web luyện thi khác.
+- **Tài khoản và chi phí:** chấm theo bình luận và OCR không cần tài khoản hay API key. Tính năng AI dùng cơ chế BYOK: chi phí và hạn mức (quota) tính theo tài khoản API của riêng bạn, trừ khi bạn nối tới máy chủ cục bộ (`http://localhost`, `http://127.0.0.1`, `http://[::1]`).
+- **Độ tin cậy của đáp án:** bình luận cộng đồng và AI đều chỉ là nguồn tham khảo. Tỷ lệ phần trăm hiển thị là tỷ lệ phiếu bình luận, không phải xác suất đáp án đúng. Khi bình luận có một tập đáp án thắng rõ ràng, kết quả chấm vẫn theo bình luận kể cả khi AI chọn khác (bảng lời giải sẽ ghi rõ sự chênh lệch).
+- **Giới hạn kỹ thuật:** luồng AI chỉ đọc ảnh cùng origin với trang, định dạng `PNG/JPEG/WebP/GIF`, dung lượng tối đa `15 MB`. Thời gian chờ tối đa: `15s` cho `/models`; `60s` (`default`/`off`), `90s` (`low`/`medium`) hoặc `120s` (`high`) cho lời giải AI; `60s` mỗi bước cho OCR.
+- **Tính năng chưa có:** chưa đồng bộ tiến độ giữa các trình duyệt hoặc nhiều thiết bị — hãy xuất CSV nếu muốn giữ bản ôn tập. Script tự xuất CSV một lần khi chấm xong câu có số lớn nhất nhận diện được trong gallery, nhưng nếu danh sách ảnh không đầy đủ hoặc trình duyệt chặn tải tự động thì cần bấm **Xuất CSV** thủ công.
+
+---
+
+## Dữ liệu và quyền riêng tư
+
+- **Lưu cục bộ:** lịch sử câu sai, câu gắn sao (`fuoReview:*`), cấu hình AI (`fuoAIConfig`) và API key (`fuoAIKeys`) được lưu trong bộ nhớ userscript của Tampermonkey trên máy bạn. Không có máy chủ trung gian hay đồng bộ đám mây.
+- **Xử lý API key:** key chỉ nhập qua hộp thoại `prompt()` của trình duyệt và không ghi vào DOM, ô `<input>`, `localStorage`, `sessionStorage`, file CSV hay `console.*`. Mỗi key gắn theo origin (`scheme + host + port`): nếu đổi **Base URL** sang domain khác và lưu, script tự xóa key cũ để tránh gửi nhầm sang máy chủ khác. Lỗi HTTP từ nhà cung cấp cũng được lọc bí mật (`[REDACTED]`) trước khi hiển thị.
+- **Dữ liệu gửi ra ngoài:** script không gắn telemetry hay theo dõi hành vi. Chỉ khi bạn bấm **Xem đáp án AI** hoặc khi cần AI chấm (không có phiếu / hòa phiếu), trình duyệt mới gửi ảnh câu hỏi và lựa chọn hiện tại trực tiếp tới endpoint bạn đã cấu hình qua `GM_xmlhttpRequest` với `anonymous: true` (không kèm cookie trình duyệt). Khi dùng các domain tùy chỉnh mới, Tampermonkey sẽ hỏi xác nhận quyền `@connect`. Ngoài ra, trình duyệt tải thư viện KaTeX (`0.19.1`) và Tesseract.js (`5.1.1`) từ CDN khi chạy.
+
+---
+
+## Phát triển và đóng góp
+
+- **Công nghệ:** toàn bộ userscript nằm trong một file [`fuo-reui.user.js`](./fuo-reui.user.js) (JavaScript thuần, sửa trực tiếp, không cần bước build). Phụ thuộc trình duyệt: KaTeX `0.19.1`, Tesseract.js `5.1.1`. Kiểm thử dùng Playwright `1.56.1` (`tests/quiz.spec.js`, `tests/fixture.html`, `tests/ocr.html`).
+
+### Chạy kiểm thử tự động
+
+Cần Git và Node.js/npm:
+
+```sh
+git clone https://github.com/bGiaHuy/fuo-reui.git
+cd fuo-reui
+npm ci
+npx playwright install chromium
+npm test
 ```
 
-### Các nút thao tác cơ bản:
-- **`Làm lại`**: Xóa kết quả vừa bấm để tự làm lại câu hiện tại mà không làm mất lịch sử câu đã từng sai.
-- **`Hiện bình luận` / `Ẩn bình luận`**: Mặc định bình luận bị ẩn để tránh spoil; bấm nút này nếu muốn xem mọi người thảo luận gì.
-- **`Xem đáp án AI`**: Gọi AI phân tích câu hỏi và giải thích từng phương án đúng/sai.
-- **`Cài đặt AI`**: Mở bảng chọn nhà cung cấp AI, nhập key, test model `/models` và điều chỉnh mức suy nghĩ (*Thinking*).
-- **`☆ Đánh dấu`**: Đánh dấu câu hỏi cần xem lại đặc biệt.
-- **`Xuất CSV`**: Tải về file `<Tên_đề>_cau-can-on.csv` để nhập vào Excel hoặc Anki.
+Trên Linux thiếu thư viện hệ thống, dùng `npx playwright install --with-deps chromium`. Chạy riêng một cấu hình viewport (`1280×800` hoặc `390×844`):
+
+```sh
+npm test -- --project=desktop
+npm test -- --project=mobile
+```
+
+*Bộ test giả lập OCR và AI nên không gọi API thật hay diễn đàn đang chạy.*
+
+### Chạy trang mẫu thủ công
+
+Từ thư mục gốc repo (cần Python 3):
+
+```sh
+python3 -m http.server 8765
+```
+
+- `http://localhost:8765/tests/fixture.html`: thử luồng làm bài, chấm điểm, **Cài đặt AI** (kèm mock `/models`) và xuất CSV mà không cần cài Tampermonkey.
+- `http://localhost:8765/tests/ocr.html`: thử Tesseract OCR thật qua CDN trên ảnh tạo sẵn.
+
+### Báo lỗi và gửi thay đổi
+
+Mở [GitHub Issue](https://github.com/bGiaHuy/fuo-reui/issues) kèm mô tả lỗi (hoặc tên ảnh / cấu trúc bình luận gặp vấn đề), hoặc tạo Pull Request kèm kiểm thử trong `tests/quiz.spec.js`.
 
 ---
 
-## 8. Giới hạn và tích hợp
+## Credits và License
 
-- **Yêu cầu môi trường:** Tiện ích hoạt động dựa trên cấu trúc trình xem ảnh Fancybox của diễn đàn `fuoverflow.com/threads/*`. Không áp dụng cho các trang web thi thử khác ngoài FUOverflow.
-- **Tài khoản & Quota AI:**
-  - Chức năng chấm theo bình luận và OCR nhận diện: **Hoàn toàn miễn phí 100%**, không cần tài khoản hay API key.
-  - Chức năng AI hoạt động theo mô hình **BYOK (Bring Your Own Key)**: Bạn tự dùng API key cá nhân của DeepSeek, OpenAI, Claude, Gemini hoặc kết nối Localhost Ollama miễn phí. Chi phí API (nếu có) do bạn tự quản lý theo quota tài khoản của mình.
-- **Xử lý dữ liệu AI:** Script chỉ gửi ảnh câu hỏi và phương án bạn chọn đến endpoint AI khi bạn chủ động bấm nút *Xem đáp án AI* hoặc khi đề thi hòa phiếu/không có bình luận.
-- **Tính năng chưa hỗ trợ:** Chưa hỗ trợ đồng bộ dữ liệu qua tài khoản đám mây giữa nhiều máy tính khác nhau (hãy dùng tính năng Xuất CSV để lưu giữ kết quả học tập).
+### Tác giả và đóng góp
 
----
+- **Gia Huy Bùi** ([@bGiaHuy](https://github.com/bGiaHuy)) — tác giả gốc của repo và userscript ban đầu, cải thiện giao diện đọc lời giải AI trên sidebar và kiểm duyệt tích hợp BYOK.
+- **Phùng Xuân Bách** ([@Gokigenzo](https://github.com/Gokigenzo)) — đồng phát triển: phân loại câu hỏi theo phiếu bình luận và OCR, lời giải AI kèm KaTeX, đánh dấu sao, xuất CSV, nhận diện tên ảnh linh hoạt (`v1.5.3`) và tách ảnh trùng tên (`v1.5.4`).
+- **thanh huy** ([@premierere](https://github.com/premierere)) — đóng góp hỗ trợ AI BYOK đa nhà cung cấp, tải danh sách `/models` và tùy chọn mức suy nghĩ (`Thinking`).
 
-## 9. Dữ liệu và quyền riêng tư
+### Thư viện và nền tảng
 
-- **Lưu trữ 100% cục bộ (Zero Cloud Storage):** Mọi lịch sử làm bài, danh sách câu sai, câu đánh dấu và cấu hình cá nhân được lưu hoàn toàn trong bộ nhớ an toàn của Tampermonkey (`GM_getValue`/`GM_setValue`) trên máy tính của bạn.
-- **Bảo mật API Key tuyệt đối:**
-  - API Key chỉ được nhập qua hộp thoại `prompt()` nguyên bản của trình duyệt và lưu vào kho riêng `fuoAIKeys`.
-  - **Không bao giờ** ghi key vào mã HTML DOM, không lưu trong `localStorage`/`sessionStorage`, không in ra `console.log` và không đưa vào file CSV.
-  - Tự động xóa key khi bạn đổi sang tên miền khác (Origin-bound protection) để ngăn ngừa rủi ro gửi nhầm key sang server lạ.
-- **Không thu thập dữ liệu (No Telemetry):** Không cài mã theo dõi, không gửi dữ liệu hành vi người dùng về bất kỳ máy chủ nào.
+- [KaTeX](https://katex.org/) — hiển thị công thức toán.
+- [Tesseract.js](https://tesseract.projectnaptha.com/) — OCR phân loại câu hỏi trên trình duyệt.
+- [Playwright](https://playwright.dev/) — bộ kiểm thử tự động desktop và mobile.
+- [Tampermonkey](https://www.tampermonkey.net/) — trình chạy userscript.
+- [FUOverflow](https://fuoverflow.com/) — diễn đàn nguồn đề thi; dự án này phát triển độc lập, không trực thuộc ban quản trị FUOverflow.
 
----
+### License
 
-## 10. Thông tin cho người đóng góp
-
-Chúng tôi luôn hoan nghênh các đóng góp (Pull Request), báo lỗi (Issue) hoặc ý tưởng nâng cấp giao diện từ cộng đồng sinh viên!
-
-- **Công nghệ sử dụng:** Vanilla JavaScript (ES6+), Tampermonkey API (`GM_*`), Tesseract.js (OCR), KaTeX (Math rendering), Playwright (E2E Testing).
-- **Cấu trúc mã nguồn:** Toàn bộ userscript gói gọn trong file duy nhất `fuo-reui.user.js` (không cần bước build/bundle phức tạp).
-- **Quy trình chạy kiểm thử tự động:**
-  ```bash
-  # 1. Clone repo
-  git clone https://github.com/bGiaHuy/fuo-reui.git
-  cd fuo-reui
-
-  # 2. Cài đặt môi trường test
-  npm ci
-  npx playwright install chromium
-
-  # 3. Chạy 108 test cases tự động
-  npm test
-
-  # 4. Chạy riêng desktop hoặc mobile
-  npm test -- --project=desktop
-  npm test -- --project=mobile
-  ```
-- **Báo lỗi & Đóng góp:** Tạo Issue hoặc gửi Pull Request tại [GitHub Repository](https://github.com/bGiaHuy/fuo-reui).
-
----
-
-## 11. Credits và licence
-
-### Nhóm phát triển & Đóng góp
-- **Gia Huy Bùi ([@bGiaHuy](https://github.com/bGiaHuy))** — *Maintainer & Tác giả chính*: Thiết kế kiến trúc BYOK AI đa nhà cung cấp, hệ thống cấu hình model/thinking, nâng cấp giao diện dark mode hiện đại, tích hợp công thức KaTeX và toàn bộ test suite Playwright.
-- **Phùng Xuân Bách ([@lthpxb2007](https://github.com/lthpxb2007))** — *Tác giả khởi xướng (Original Creator)*: Khởi tạo phiên bản userscript đầu tiên, xây dựng thuật toán chấm điểm theo đồng thuận bình luận và tích hợp OCR nhận diện loại câu hỏi.
-- **premierere ([@huy076b2](https://github.com/premierere))** — *Contributor*: Đóng góp hoàn thiện tính năng BYOK, tự động khám phá model `/models` và điều khiển mức suy nghĩ.
-
-### Thư viện bên thứ ba
-- [KaTeX](https://katex.org/) (Khan Academy) — Hiển thị công thức Toán học.
-- [Tesseract.js](https://tesseract.projectnaptha.com/) — Nhận diện ký tự quang học OCR.
-- [Playwright](https://playwright.dev/) (Microsoft) — Bộ kiểm thử tự động End-to-End.
-- [Diễn đàn FUOverflow](https://fuoverflow.com/) — Nền tảng chia sẻ tài liệu của sinh viên FPT.
-
-### licence (License)
-Phát hành theo licence mã nguồn mở **MIT License**. Bạn được tự do sử dụng, chỉnh sửa và phân phối lại vì mục đích phi thương mại và học tập.
+Repo hiện chưa có file `LICENSE`. Nếu bạn muốn phân phối lại hoặc dùng ngoài mục đích học tập cá nhân, hãy trao đổi trước với tác giả qua [GitHub Issues](https://github.com/bGiaHuy/fuo-reui/issues).

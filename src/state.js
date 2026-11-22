@@ -57,7 +57,17 @@
   // Attachment filenames are stable; signed URLs and thumbnail URLs are not.
   const questionImage = /^[^<>/\\]+\.(?:webp|jpe?g|png|gif|avif)$/i;
 
+  const titleCache = new WeakMap();
   function attachmentTitle(link) {
+    const sig = (link.getAttribute('data-caption') || '') + '\u0000' + (link.getAttribute('title') || '') + '\u0000' + link.textContent;
+    const cached = titleCache.get(link);
+    if (cached && cached.sig === sig) return cached.title;
+    const title = computeAttachmentTitle(link);
+    titleCache.set(link, { sig, title });
+    return title;
+  }
+
+  function computeAttachmentTitle(link) {
     const caption = document.createElement('template');
     caption.innerHTML = link.getAttribute('data-caption') || '';
     const values = [caption.content.querySelector('h4')?.textContent,
@@ -74,16 +84,33 @@
     catch { return ''; }
   }
 
+  // Per-frame index of title -> distinct stable URLs, rebuilt at most once per animation frame.
+  let titleIndex = null;
+  let titleIndexLinks = null;
+  function pageLinks() {
+    if (!titleIndexLinks) {
+      titleIndexLinks = [...document.querySelectorAll('a[href]')].filter(a => !a.closest('.fancybox__container'));
+      requestAnimationFrame(() => { titleIndexLinks = null; titleIndex = null; });
+    }
+    return titleIndexLinks;
+  }
   function questionKey(title, url) {
-    const urls = new Set([...document.querySelectorAll('a[href]')]
-      .filter(a => !a.closest('.fancybox__container') && attachmentTitle(a) === title)
-      .map(a => stableImageURL(a.href)));
+    if (!titleIndex) {
+      titleIndex = new Map();
+      for (const a of pageLinks()) {
+        const t = attachmentTitle(a);
+        if (!t) continue;
+        if (!titleIndex.has(t)) titleIndex.set(t, new Set());
+        titleIndex.get(t).add(stableImageURL(a.href));
+      }
+    }
+    const urls = titleIndex.get(title);
     // Preserve existing practice keys unless a filename is ambiguous.
-    return urls.size > 1 ? title + ' | ' + stableImageURL(url) : title;
+    return urls && urls.size > 1 ? title + ' | ' + stableImageURL(url) : title;
   }
 
   function discoverQuestions(target) {
-    const links = [...document.querySelectorAll('a[href]')].filter(a => !a.closest('.fancybox__container'));
+    const links = pageLinks();
     const source = links.find(a => stableImageURL(a.href) === stableImageURL(target?.image?.src))
       || links.find(a => attachmentTitle(a) === target?.title);
     // Gallery attachments can live outside .bbWrapper.

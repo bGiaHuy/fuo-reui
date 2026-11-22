@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FUOverflow — Luyện đề
 // @namespace    fuoverflow-quiz-local
-// @version      3.0.0
+// @version      3.0.1
 // @description  Luyện đề trắc nghiệm ngay trong trình xem ảnh FUOverflow: chọn A-H, chấm theo bình luận hoặc AI (BYOK), thi thử bấm giờ, vòng ôn tập và xuất CSV/Anki/JSON.
 // @author       Gia Huy Bùi, Phùng Xuân Bách, thanh huy
 // @license      MIT
@@ -90,7 +90,17 @@
   // Attachment filenames are stable; signed URLs and thumbnail URLs are not.
   const questionImage = /^[^<>/\\]+\.(?:webp|jpe?g|png|gif|avif)$/i;
 
+  const titleCache = new WeakMap();
   function attachmentTitle(link) {
+    const sig = (link.getAttribute('data-caption') || '') + '\u0000' + (link.getAttribute('title') || '') + '\u0000' + link.textContent;
+    const cached = titleCache.get(link);
+    if (cached && cached.sig === sig) return cached.title;
+    const title = computeAttachmentTitle(link);
+    titleCache.set(link, { sig, title });
+    return title;
+  }
+
+  function computeAttachmentTitle(link) {
     const caption = document.createElement('template');
     caption.innerHTML = link.getAttribute('data-caption') || '';
     const values = [caption.content.querySelector('h4')?.textContent,
@@ -107,16 +117,33 @@
     catch { return ''; }
   }
 
+  // Per-frame index of title -> distinct stable URLs, rebuilt at most once per animation frame.
+  let titleIndex = null;
+  let titleIndexLinks = null;
+  function pageLinks() {
+    if (!titleIndexLinks) {
+      titleIndexLinks = [...document.querySelectorAll('a[href]')].filter(a => !a.closest('.fancybox__container'));
+      requestAnimationFrame(() => { titleIndexLinks = null; titleIndex = null; });
+    }
+    return titleIndexLinks;
+  }
   function questionKey(title, url) {
-    const urls = new Set([...document.querySelectorAll('a[href]')]
-      .filter(a => !a.closest('.fancybox__container') && attachmentTitle(a) === title)
-      .map(a => stableImageURL(a.href)));
+    if (!titleIndex) {
+      titleIndex = new Map();
+      for (const a of pageLinks()) {
+        const t = attachmentTitle(a);
+        if (!t) continue;
+        if (!titleIndex.has(t)) titleIndex.set(t, new Set());
+        titleIndex.get(t).add(stableImageURL(a.href));
+      }
+    }
+    const urls = titleIndex.get(title);
     // Preserve existing practice keys unless a filename is ambiguous.
-    return urls.size > 1 ? title + ' | ' + stableImageURL(url) : title;
+    return urls && urls.size > 1 ? title + ' | ' + stableImageURL(url) : title;
   }
 
   function discoverQuestions(target) {
-    const links = [...document.querySelectorAll('a[href]')].filter(a => !a.closest('.fancybox__container'));
+    const links = pageLinks();
     const source = links.find(a => stableImageURL(a.href) === stableImageURL(target?.image?.src))
       || links.find(a => attachmentTitle(a) === target?.title);
     // Gallery attachments can live outside .bbWrapper.
@@ -1764,8 +1791,8 @@
     const slide = root.querySelector('.fancybox__slide.is-selected');
     const image = slide?.querySelector('img.fancybox-image');
     if (!image) return null;
-    const source = [...document.querySelectorAll('a[href]')].find(a =>
-      !a.closest('.fancybox__container') && stableImageURL(a.href) === stableImageURL(image.src));
+    const imgStable = stableImageURL(image.src);
+    const source = pageLinks().find(a => stableImageURL(a.href) === imgStable);
     // Compact Fancybox moves the caption outside the selected slide.
     const title = slide.querySelector('.fancybox__caption h4')?.textContent.trim()
       || (source && attachmentTitle(source))
@@ -2980,7 +3007,15 @@
       }
     });
   }
-  new MutationObserver(schedule).observe(document, {
+  // Ignore mutations caused by our own panel/dialogs to avoid a render feedback loop.
+  const isOwnNode = node => {
+    const el = node instanceof Element ? node : node?.parentElement;
+    return Boolean(el?.closest('.fuo-quiz, .fuo-settings-backdrop'));
+  };
+  new MutationObserver(records => {
+    if (records.every(r => isOwnNode(r.target))) return;
+    schedule();
+  }).observe(document, {
     subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'src', 'href', 'data-caption', 'alt']
   });
   window.addEventListener('resize', schedule);

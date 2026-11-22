@@ -219,8 +219,8 @@
     const slide = root.querySelector('.fancybox__slide.is-selected');
     const image = slide?.querySelector('img.fancybox-image');
     if (!image) return null;
-    const source = [...document.querySelectorAll('a[href]')].find(a =>
-      !a.closest('.fancybox__container') && stableImageURL(a.href) === stableImageURL(image.src));
+    const imgStable = stableImageURL(image.src);
+    const source = pageLinks().find(a => stableImageURL(a.href) === imgStable);
     // Compact Fancybox moves the caption outside the selected slide.
     const title = slide.querySelector('.fancybox__caption h4')?.textContent.trim()
       || (source && attachmentTitle(source))

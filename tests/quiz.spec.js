@@ -512,10 +512,21 @@ test('extension gm-shim hydrates chrome.storage.local and runs shared core.js',a
 test('extension manifest and userscript Greasy Fork metadata are valid',async()=>{
  const manifest=JSON.parse(fs.readFileSync('extension/manifest.json','utf8'));
  expect(manifest.manifest_version).toBe(3);
- expect(manifest.version).toBe('3.0.0');
+ expect(manifest.version).toBe('3.0.1');
  expect(manifest.content_scripts[0].js).toEqual(['core.js','gm-shim.js']);
  expect(fs.existsSync('extension/icons/icon128.png')).toBe(true);
- expect(script).toContain('@version      3.0.0');
+ expect(script).toContain('@version      3.0.1');
  expect(script).toContain('@license      MIT');
  expect(script).toContain('@description  ');
+});
+
+test('panel mutations do not trigger infinite re-render loop',async({page})=>{
+ const p=await fixture(page,['A']);
+ await expect(option(p,'A')).toBeEnabled();
+ await page.evaluate(()=>{
+   window.__mutCount=0;
+   new MutationObserver(()=>window.__mutCount++).observe(document.querySelector('.fuo-quiz'),{subtree:true,childList:true,attributes:true});
+ });
+ await page.waitForTimeout(200);
+ expect(await page.evaluate(()=>window.__mutCount)).toBe(0);
 });

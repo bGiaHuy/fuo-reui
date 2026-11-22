@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FUOverflow — Luyện đề
 // @namespace    fuoverflow-quiz-local
-// @version      3.0.0
+// @version      3.0.1
 // @description  Luyện đề trắc nghiệm ngay trong trình xem ảnh FUOverflow: chọn A-H, chấm theo bình luận hoặc AI (BYOK), thi thử bấm giờ, vòng ôn tập và xuất CSV/Anki/JSON.
 // @author       Gia Huy Bùi, Phùng Xuân Bách, thanh huy
 // @license      MIT

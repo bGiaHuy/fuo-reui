@@ -856,7 +856,15 @@
       }
     });
   }
-  new MutationObserver(schedule).observe(document, {
+  // Ignore mutations caused by our own panel/dialogs to avoid a render feedback loop.
+  const isOwnNode = node => {
+    const el = node instanceof Element ? node : node?.parentElement;
+    return Boolean(el?.closest('.fuo-quiz, .fuo-settings-backdrop'));
+  };
+  new MutationObserver(records => {
+    if (records.every(r => isOwnNode(r.target))) return;
+    schedule();
+  }).observe(document, {
     subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'src', 'href', 'data-caption', 'alt']
   });
   window.addEventListener('resize', schedule);

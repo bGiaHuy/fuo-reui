@@ -3,6 +3,8 @@
     "@playwright/test": "1.56.1"
   },
   "scripts": {
+    "build": "node scripts/build.js",
+    "build:check": "node scripts/build.js --check",
     "test": "playwright test"
   },
   "private": true

@@ -1,7 +1,12 @@
 // ==UserScript==
 // @name         FUOverflow — Luyện đề
 // @namespace    fuoverflow-quiz-local
-// @version      2.2.0
+// @version      3.0.0
+// @description  Luyện đề trắc nghiệm ngay trong trình xem ảnh FUOverflow: chọn A-H, chấm theo bình luận hoặc AI (BYOK), thi thử bấm giờ, vòng ôn tập và xuất CSV/Anki/JSON.
+// @author       Gia Huy Bùi, Phùng Xuân Bách, thanh huy
+// @license      MIT
+// @homepageURL  https://github.com/bGiaHuy/fuo-reui
+// @supportURL   https://github.com/bGiaHuy/fuo-reui/issues
 // @updateURL    https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js
 // @downloadURL  https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js
 // @match        https://fuoverflow.com/threads/*
@@ -2981,4 +2986,3 @@
   window.addEventListener('resize', schedule);
   schedule();
 })();
-

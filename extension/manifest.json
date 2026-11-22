@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "FUO reUI — FUOverflow Practice Quiz",
+  "version": "3.0.0",
+  "description": "Luyện đề trắc nghiệm ngay trong trình xem ảnh FUOverflow: chấm theo bình luận hoặc AI (BYOK), thi thử bấm giờ, vòng ôn tập và xuất CSV/Anki/JSON.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://fuoverflow.com/*",
+    "https://api.deepseek.com/*",
+    "https://api.openai.com/*",
+    "https://api.anthropic.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://openrouter.ai/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "FUO reUI",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://fuoverflow.com/threads/*"
+      ],
+      "js": [
+        "core.js",
+        "gm-shim.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "fuo-reui@bgiahuy.github.io",
+      "strict_min_version": "121.0"
+    }
+  }
+}

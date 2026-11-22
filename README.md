@@ -12,8 +12,8 @@
 </p>
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_Userscript-v2.2.0-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt Userscript"></a>
-  <a href="https://github.com/bGiaHuy/fuo-reui/actions"><img src="https://img.shields.io/badge/Playwright-122_Passed-brightgreen?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright Test Suite"></a>
+  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_Userscript-v3.0.0-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt Userscript"></a>
+  <a href="https://github.com/bGiaHuy/fuo-reui/actions"><img src="https://img.shields.io/badge/Playwright-126_Passed-brightgreen?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright Test Suite"></a>
   <a href="#8-giới-hạn-và-tích-hợp"><img src="https://img.shields.io/badge/AI_BYOK-DeepSeek_|_OpenAI_|_Claude_|_Gemini_|_Ollama-blueviolet?style=for-the-badge" alt="AI Multi-provider"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License MIT"></a>
 </p>
@@ -90,7 +90,7 @@ Người dùng chỉ cần trình duyệt có Tampermonkey. Node.js và Python c
 ### Bước 2: Cài Userscript
 
 <p>
-  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_ngay-fuo--reui.user.js_(v2.2.0)-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt fuo-reui.user.js"></a>
+  <a href="https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js"><img src="https://img.shields.io/badge/Cài_đặt_ngay-fuo--reui.user.js_(v3.0.0)-00485B?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Cài đặt fuo-reui.user.js"></a>
 </p>
 
 1. Bấm nút **Cài đặt ngay** ở trên để mở file userscript trên nhánh `main`.
@@ -104,14 +104,23 @@ Mở Dashboard Tampermonkey → **Create a new script**, thay nội dung mặc �
 
 </details>
 
+<details>
+<summary>Cài bằng bản Browser Extension (Manifest V3 — không cần Tampermonkey)</summary>
+
+1. Tải gói `fuo-reui-extension-v3.0.0.zip` tại [GitHub Releases](https://github.com/bGiaHuy/fuo-reui/releases/latest) và giải nén (hoặc dùng trực tiếp thư mục `extension/` trong repo).
+2. Mở `chrome://extensions` (Chrome/Edge/Brave), bật **Developer mode** → bấm **Load unpacked** → chọn thư mục vừa giải nén.
+3. Mở bài viết đề thi trên `https://fuoverflow.com/threads/...` và bấm biểu tượng **FUO reUI** trên thanh công cụ khi cần mở menu thao tác nhanh.
+
+</details>
+
 ---
 
 ## 4. Thông tin dự án
 
 | Tiêu chí | Chi tiết |
 | :--- | :--- |
-| **Nền tảng hỗ trợ** | Chrome, Edge, Brave, Firefox, Safari, Opera thông qua **Tampermonkey** hoặc **Violentmonkey**. |
-| **Trạng thái** | **v2.2.0** — hỗ trợ tự kiểm tra cập nhật qua Tampermonkey, đã kiểm thử với **122 ca Playwright** cho cả desktop (`1280×800`) và mobile (`390×844`). |
+| **Nền tảng hỗ trợ** | Chrome, Edge, Brave, Firefox, Safari, Opera qua **Tampermonkey** / **Violentmonkey**, hoặc cài trực tiếp bản **Extension (Manifest V3)**. |
+| **Trạng thái** | **v3.0.0** — hỗ trợ tự kiểm tra cập nhật qua Tampermonkey, sẵn sàng metadata Greasy Fork, đã kiểm thử với **126 ca Playwright** cho cả desktop (`1280×800`) và mobile (`390×844`). |
 | **License** | Mã nguồn mở theo **[MIT License](./LICENSE)**. |
 | **Link bản mới nhất** | [`fuo-reui.user.js` trên nhánh `main`](https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js). |
 
@@ -211,15 +220,17 @@ flowchart LR
 
 ## 10. Thông tin cho người đóng góp
 
-- **Công nghệ:** JavaScript thuần trong một file duy nhất [`fuo-reui.user.js`](./fuo-reui.user.js) (không cần bước build), Tampermonkey API (`GM_*`), Tesseract.js `5.1.1`, KaTeX `0.19.1`, Playwright `1.56.1`.
-- **Chạy kiểm thử tự động (122 ca trên Desktop và Mobile):**
+- **Công nghệ & cấu trúc mã nguồn:** Mã nguồn tách theo module trong `src/` (`meta.js`, `state.js`, `styles.js`, `ai-config.js`, `ai-client.js`, `ui.js`), build bằng `scripts/build.js` (không phụ thuộc bundler ngoài) ra đồng thời [`fuo-reui.user.js`](./fuo-reui.user.js) và [`extension/core.js`](./extension/core.js) dùng chung cho bản Extension MV3 (`extension/`). Phụ thuộc runtime: Tesseract.js `5.1.1`, KaTeX `0.19.1`; kiểm thử: Playwright `1.56.1`.
+- **Build & chạy kiểm thử tự động (126 ca trên Desktop và Mobile):**
   ```sh
   git clone https://github.com/bGiaHuy/fuo-reui.git
   cd fuo-reui
   npm ci
+  npm run build:check
   npx playwright install chromium
   npm test
   ```
+  Sau khi sửa file trong `src/`, chạy `npm run build` để cập nhật lại `fuo-reui.user.js` và `extension/core.js`.
   Chạy riêng một viewport:
   ```sh
   npm test -- --project=desktop

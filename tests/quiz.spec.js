@@ -484,3 +484,38 @@ test('backup modal exports Anki TSV and JSON without API keys and restores progr
  await d.getByRole('button',{name:'Đóng',exact:true}).click();
  await expect(p.getByRole('button',{name:'Câu sai (2)',exact:true})).toBeVisible();
 });
+
+test('extension gm-shim hydrates chrome.storage.local and runs shared core.js',async({page})=>{
+ const coreScript=fs.readFileSync('extension/core.js','utf8');
+ const shimScript=fs.readFileSync('extension/gm-shim.js','utf8');
+ await page.route('https://fuoverflow.com/**',route=>route.fulfill({contentType:'text/html',body:'<html><body></body></html>'}));
+ await page.goto('https://fuoverflow.com/threads/ext-test/');
+ await page.evaluate(()=>{
+   window.extStore={};
+   window.chrome={
+     storage:{local:{get:(_k,cb)=>cb({...window.extStore}),set:obj=>Object.assign(window.extStore,obj)}},
+     runtime:{sendMessage:(_m,cb)=>cb({ok:true,status:200,responseText:'{}'}),onMessage:{addListener:()=>{}}}
+   };
+   const root=document.createElement('div');root.className='fancybox__container fancybox-show-sidebar';
+   root.innerHTML='<div class="fancybox__slide is-selected"><div class="fancybox__caption"><h4>Q1.png</h4></div><img class="fancybox-image" src="/Q1.png"></div><aside class="fancybox-sidebar"><div class="fancybox-sidebar-content"><div class="xfmgInfoBlock-title"><h2>Q1.png</h2></div><div class="js-comment" data-author="1"><div class="comment-body"><div class="bbWrapper">A</div></div></div></div></aside>';
+   document.body.append(root);
+ });
+ await page.addScriptTag({content:coreScript});
+ await page.addScriptTag({content:shimScript});
+ const p=page.locator('.fuo-quiz');
+ await expect(option(p,'A')).toBeEnabled();
+ await option(p,'A').click();
+ await expect(p).toContainText('Đúng · Nguồn 1 bình luận');
+ expect(await page.evaluate(()=>Object.values(window.extStore)[0].questions['Q1.png'].selected)).toBe('A');
+});
+
+test('extension manifest and userscript Greasy Fork metadata are valid',async()=>{
+ const manifest=JSON.parse(fs.readFileSync('extension/manifest.json','utf8'));
+ expect(manifest.manifest_version).toBe(3);
+ expect(manifest.version).toBe('3.0.0');
+ expect(manifest.content_scripts[0].js).toEqual(['core.js','gm-shim.js']);
+ expect(fs.existsSync('extension/icons/icon128.png')).toBe(true);
+ expect(script).toContain('@version      3.0.0');
+ expect(script).toContain('@license      MIT');
+ expect(script).toContain('@description  ');
+});

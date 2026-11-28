@@ -1020,7 +1020,9 @@
     backdrop.append(dialog);
     rebuildProviderSelect();
     populateFormFromSelected();
-    document.body.append(backdrop);
+    let modalHost = document.body;
+    try { modalHost = document.querySelector('dialog:modal') || document.body; } catch {}
+    modalHost.append(backdrop);
     providerSelect.focus();
     return backdrop;
   }

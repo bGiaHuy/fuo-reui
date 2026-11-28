@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "FUO reUI — FUOverflow Practice Quiz",
-  "version": "3.0.1",
-  "description": "Luyện đề trắc nghiệm ngay trong trình xem ảnh FUOverflow: chấm theo bình luận hoặc AI (BYOK), thi thử bấm giờ, vòng ôn tập và xuất CSV/Anki/JSON.",
+  "version": "4.0.0",
+  "description": "Luyện đề trắc nghiệm ngay trong trình xem ảnh mới của FUOverflow: ẩn tỷ lệ bình chọn và FUO AI, chấm cộng đồng / FUO AI / BYOK AI, thi thử bấm giờ, vòng ôn tập và xuất CSV/Anki/JSON.",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
@@ -13,6 +13,7 @@
   ],
   "host_permissions": [
     "https://fuoverflow.com/*",
+    "https://cdn.fuoverflow.com/*",
     "https://api.deepseek.com/*",
     "https://api.openai.com/*",
     "https://api.anthropic.com/*",
@@ -39,7 +40,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://fuoverflow.com/threads/*"
+        "https://fuoverflow.com/*"
       ],
       "js": [
         "core.js",

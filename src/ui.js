@@ -3,88 +3,84 @@
     return Boolean(target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]'));
   }
 
-  function orderedReviewKeys(predicate) {
+  function orderedReviewKeys(examInfo, predicate) {
+    const rev = currentReview(examInfo);
     const matched = [];
     const seen = new Set();
     for (const [key] of catalog) {
-      const item = review.get(key);
+      const item = rev.get(key);
       if (item && predicate(item)) {
         matched.push(key);
         seen.add(key);
       }
     }
     const extra = [];
-    for (const [key, item] of review) {
+    for (const [key, item] of rev) {
       if (!seen.has(key) && item && predicate(item)) extra.push(key);
     }
-    extra.sort((a, b) => (Number(a.match(/\d+/)?.[0]) || 0) - (Number(b.match(/\d+/)?.[0]) || 0));
+    extra.sort((a, b) => {
+      const numA = rev.get(a)?.index || Number(a.match(/\d+/)?.[0]) || 0;
+      const numB = rev.get(b)?.index || Number(b.match(/\d+/)?.[0]) || 0;
+      return numA - numB || a.localeCompare(b);
+    });
     return matched.concat(extra);
   }
 
-  function computeProgress() {
-    const keys = new Set([...catalog.keys(), ...attempts.keys(), ...review.keys()]);
+  function computeProgress(examInfo, currentTarget) {
+    const rev = currentReview(examInfo);
+    const keys = new Set([...catalog.keys(), ...attempts.keys(), ...rev.keys()]);
     let answered = 0;
     let right = 0;
     for (const key of keys) {
       const att = attempts.get(key);
-      const rev = review.get(key);
-      const answer = att?.answer || rev?.answer || '';
+      const item = rev.get(key);
+      const answer = att?.answer || item?.answer || '';
       if (!answer) continue;
       answered++;
-      const selected = att?.answer ? att.selected : (rev?.selected || '');
+      const selected = att?.answer ? att.selected : (item?.selected || '');
       if (selected && selected === answer) right++;
     }
-    const wrongKeys = orderedReviewKeys(item => Boolean(item.wrong));
-    const starredKeys = orderedReviewKeys(item => Boolean(item.starred));
-    return { total: catalog.size, answered, right, wrongKeys, starredKeys };
+    const wrongKeys = orderedReviewKeys(examInfo, item => Boolean(item.wrong));
+    const starredKeys = orderedReviewKeys(examInfo, item => Boolean(item.starred));
+    const total = Math.max(catalog.size, currentTarget?.total || 0);
+    return { total, answered, right, wrongKeys, starredKeys };
   }
 
-  function jumpToQuestion(root, key) {
+  function jumpToQuestion(ctx, key) {
+    const rev = currentReview(activeExamInfo);
     const entry = catalog.get(key);
-    const targetUrl = entry?.url || review.get(key)?.url || '';
-    const targetStable = targetUrl ? stableImageURL(targetUrl) : '';
-    const targetTitle = entry?.title || key.split(' | ')[0];
-
-    const fb = typeof window.Fancybox?.getInstance === 'function' ? window.Fancybox.getInstance() : null;
-    if (fb && typeof fb.jumpTo === 'function' && Array.isArray(fb.carousel?.slides)) {
-      const idx = fb.carousel.slides.findIndex(slide => {
-        const src = slide?.src || slide?.thumbSrc || '';
-        return (targetStable && stableImageURL(src) === targetStable)
-          || (slide?.caption && String(slide.caption).includes(targetTitle));
-      });
-      if (idx >= 0) {
-        fb.jumpTo(idx);
+    const revItem = rev.get(key);
+    const idx = entry?.index || revItem?.index || Number(key.match(/^q(\d+)/i)?.[1]) || 0;
+    if (ctx.mode === 'lightbox' && idx > 0) {
+      const thumbBtn = ctx.root.querySelector('nav[aria-label="Ảnh thu nhỏ"] li button[aria-label="Ảnh ' + idx + '"]')
+        || ctx.root.querySelectorAll('nav[aria-label="Ảnh thu nhỏ"] li button')[idx - 1];
+      if (thumbBtn) {
+        thumbBtn.click();
         return true;
       }
     }
-
-    const catalogKeys = [...catalog.keys()];
-    const catalogIndex = catalogKeys.indexOf(key);
-    const thumbs = [...root.querySelectorAll('.fancybox__thumb, .f-thumbs__slide')];
-    if (catalogIndex >= 0 && thumbs[catalogIndex]) {
-      thumbs[catalogIndex].click();
-      return true;
-    }
-
-    if (entry?.link?.isConnected) {
-      entry.link.click();
-      return true;
-    }
-
-    const links = [...document.querySelectorAll('a[href]')].filter(a => !a.closest('.fancybox__container'));
-    const fallbackLink = links.find(a => {
-      const title = attachmentTitle(a);
-      return (title && questionKey(title, a.href) === key)
-        || (targetStable && stableImageURL(a.href) === targetStable);
+    const targetUrl = entry?.url || revItem?.url || '';
+    let targetPath = '';
+    try { targetPath = targetUrl ? new URL(targetUrl, location.origin).pathname : ''; } catch {}
+    const links = [...document.querySelectorAll('a[href]')];
+    const matchLink = links.find(a => {
+      const href = a.getAttribute('href') || '';
+      if (!href.includes('/media/')) return false;
+      try {
+        const p = new URL(href, location.origin).pathname;
+        return (targetPath && p === targetPath) || p.includes('/' + key);
+      } catch {
+        return false;
+      }
     });
-    if (fallbackLink) {
-      fallbackLink.click();
+    if (matchLink) {
+      matchLink.click();
       return true;
     }
     return false;
   }
 
-  function mount(root, sidebar) {
+  function mount(ctx) {
     const panel = document.createElement('section');
     panel.className = 'fuo-quiz';
     panel.setAttribute('aria-label', 'Trả lời câu hỏi');
@@ -152,10 +148,13 @@
     reviewActions.append(reviewNextBtn, reviewExitBtn);
     reviewBar.append(reviewInfo, reviewActions);
 
+    const multiHint = document.createElement('div');
+    multiHint.className = 'fuo-multi-hint';
+    multiHint.hidden = true;
     const status = document.createElement('div');
     status.setAttribute('role', 'status');
-    const comments = document.createElement('button');
-    comments.title = 'Hiện / Ẩn bình luận (M hoặc C sau khi chấm)';
+    const commentsBtn = document.createElement('button');
+    commentsBtn.title = 'Hiện / Ẩn kết quả & bình luận (M)';
     const reset = document.createElement('button');
     reset.title = 'Làm lại câu hiện tại (R)';
     const star = document.createElement('button');
@@ -164,7 +163,8 @@
     exportButton.type = 'button';
     exportButton.textContent = 'Xuất CSV';
     exportButton.onclick = () => {
-      const count = exportReview();
+      if (!question || !state) return;
+      const count = exportReview(question.exam);
       state.message = 'Đã xuất CSV: ' + count + ' câu cần ôn.';
       render();
     };
@@ -178,19 +178,22 @@
     examButton.textContent = 'Thi thử';
     examButton.title = 'Bắt đầu chế độ thi thử bấm giờ';
     star.onclick = () => {
-      if (!state) return;
-      const item = review.get(question.key) || {};
+      if (!question || !state) return;
+      const store = getReviewStore(question.exam);
+      const item = store.questions.get(question.key) || {};
       item.starred = !item.starred;
-      item.url = question.image?.src || item.url || '';
-      review.set(question.key, item);
-      saveReview();
+      item.title = question.title;
+      item.index = question.index || item.index || 0;
+      item.url = question.mediaUrl || question.image?.src || item.url || '';
+      store.questions.set(question.key, item);
+      saveReview(question.exam);
       render();
     };
     const ai = document.createElement('button');
     ai.className = 'fuo-ai-trigger';
     ai.type = 'button';
     ai.textContent = 'Xem đáp án AI';
-    ai.title = 'Xem đáp án và lời giải AI (E)';
+    ai.title = 'Xem đáp án và lời giải AI (I)';
     const aiSettings = document.createElement('button');
     aiSettings.className = 'fuo-ai-settings-btn';
     aiSettings.type = 'button';
@@ -203,23 +206,89 @@
     aiResult.setAttribute('role', 'status');
     aiResult.hidden = true;
     const submit = document.createElement('button');
+    submit.className = 'fuo-submit-btn';
     submit.type = 'button';
-    submit.textContent = 'Submit';
+    submit.textContent = 'Chấm đáp án';
     submit.title = 'Nộp đáp án đã chọn (Enter)';
     submit.onclick = () => grade();
     const retry = document.createElement('button');
     retry.type = 'button';
     retry.textContent = 'Thử lại phân loại';
     retry.onclick = () => prepare(question, state);
-    const distribution = document.createElement('div');
-    distribution.style.flexBasis = '100%';
-    const options = document.createElement('div');
-    options.className = 'fuo-options';
-    comments.type = reset.type = 'button';
+    commentsBtn.type = reset.type = 'button';
     reset.textContent = 'Làm lại';
 
-    let question, state;
-    let showComments = false;
+    let question = null;
+    let state = null;
+
+    function attachPanel() {
+      if (ctx.mode === 'lightbox') {
+        if (panel.parentElement !== ctx.sidebar || ctx.sidebar.firstElementChild !== panel) {
+          ctx.sidebar.prepend(panel);
+        }
+        return;
+      }
+      const pollSection = findPollSection(ctx.sidebar);
+      if (pollSection?.parentElement) {
+        if (panel.parentElement !== pollSection.parentElement || panel.nextElementSibling !== pollSection) {
+          pollSection.parentElement.insertBefore(panel, pollSection);
+        }
+      } else if (!panel.isConnected) {
+        ctx.sidebar.prepend(panel);
+      }
+    }
+
+    function setToggleClass(el, cls, active) {
+      if (el && el.classList.contains(cls) !== Boolean(active)) {
+        el.classList.toggle(cls, Boolean(active));
+      }
+    }
+
+    function setAttrIfChanged(el, name, val) {
+      if (val === null || val === undefined || val === '') {
+        if (el.hasAttribute(name)) el.removeAttribute(name);
+      } else if (el.getAttribute(name) !== String(val)) {
+        el.setAttribute(name, String(val));
+      }
+    }
+
+    function syncNativeDOM() {
+      const poll = readPollData(ctx.sidebar, false);
+      const pollSection = poll?.section;
+      const commentsContainer = findCommentsContainer(ctx.sidebar);
+      const synced = Boolean(question && isSlideSynced(ctx, question));
+
+      if (pollSection) {
+        const revealed = Boolean(!examMode.active && state?.revealed && synced);
+        const retrying = Boolean(!examMode.active && state?.retrying && !state?.revealed && synced);
+        setToggleClass(pollSection, 'fuo-revealed', revealed);
+        setToggleClass(pollSection, 'fuo-retrying', retrying);
+        for (const opt of poll.options) {
+          if (!state || !synced) {
+            setAttrIfChanged(opt.button, 'data-fuo-mark', null);
+            setAttrIfChanged(opt.button, 'data-fuo-selected', null);
+            continue;
+          }
+          const isSelected = state.selected.includes(opt.key);
+          const isRight = !examMode.active && state.answer && opt.key.length === 1 && state.answer.includes(opt.key);
+          const isExactComboRight = !examMode.active && state.answer && opt.key.length > 1 && state.answer === opt.key;
+          const isWrong = !examMode.active && state.answer && isSelected && !(isRight || isExactComboRight);
+          const mark = (isRight || isExactComboRight) ? 'right' : isWrong ? 'wrong' : null;
+          setAttrIfChanged(opt.button, 'data-fuo-mark', mark);
+          setAttrIfChanged(opt.button, 'data-fuo-selected', (!state.answer && isSelected) ? 'true' : null);
+        }
+      }
+
+      if (commentsContainer) {
+        setToggleClass(commentsContainer, 'fuo-comments-visible', Boolean(!examMode.active && state?.revealed && synced));
+      }
+
+      const revealed = Boolean(state?.revealed);
+      const nextLabel = revealed ? 'Ẩn kết quả & bình luận' : 'Hiện kết quả & bình luận';
+      if (commentsBtn.textContent !== nextLabel) commentsBtn.textContent = nextLabel;
+      setAttrIfChanged(commentsBtn, 'aria-expanded', String(revealed));
+      return poll;
+    }
 
     function formatClock(ms) {
       const totalSec = Math.max(0, Math.ceil(ms / 1000));
@@ -238,7 +307,7 @@
     function renderExamBar() {
       examBar.hidden = !examMode.active;
       if (!examMode.active) return;
-      const total = catalog.size || Math.max(1, examMode.answers.size);
+      const total = Math.max(catalog.size, question?.total || 0, examMode.answers.size, 1);
       const left = Math.max(0, examMode.endsAt - Date.now());
       examInfo.textContent = 'Thi thử · Đã chọn ' + examMode.answers.size + '/' + total + ' · Còn ' + formatClock(left);
     }
@@ -254,7 +323,7 @@
         (s.timedOut ? 'Hết giờ thi thử' : 'Kết quả thi thử') + ': ' + s.rightCount + '/' + s.gradedCount + ' đúng (' + pct + '%)',
         'Thời gian: ' + formatClock(s.elapsed)
       ];
-      if (s.ungradedCount > 0) parts.push('Chưa chấm (thiếu bình luận): ' + s.ungradedCount);
+      if (s.ungradedCount > 0) parts.push('Chưa chấm (thiếu đáp án cộng đồng/FUO AI): ' + s.ungradedCount);
       headline.textContent = parts.join(' · ');
       examSummary.append(headline);
       if (s.wrongList.length > 0) {
@@ -265,8 +334,8 @@
           btn.type = 'button';
           btn.className = 'fuo-jump-btn';
           btn.dataset.kind = 'wrong';
-          btn.textContent = (catalog.get(key)?.title || key.split(' | ')[0]).replace(/\.[^.]+$/, '');
-          btn.onclick = () => jumpToQuestion(root, key);
+          btn.textContent = (catalog.get(key)?.title || currentReview(activeExamInfo).get(key)?.title || key.split(' | ')[0]).replace(/\.[^.]+$/, '');
+          btn.onclick = () => jumpToQuestion(ctx, key);
           wrongRow.append(btn);
         }
         examSummary.append(wrongRow);
@@ -283,6 +352,7 @@
       stopExamTimer();
       const elapsed = Date.now() - examMode.startedAt;
       examMode.active = false;
+      const store = getReviewStore(question?.exam || activeExamInfo);
       let gradedCount = 0;
       let rightCount = 0;
       let ungradedCount = 0;
@@ -290,15 +360,15 @@
       for (const [key, selected] of examMode.answers.entries()) {
         if (!selected) continue;
         const att = attempts.get(key);
-        const rev = review.get(key);
-        const votes = att?.votes || [];
-        const voteAnswer = consensus(votes);
-        const answer = voteAnswer || rev?.answer || '';
+        const revItem = store.questions.get(key);
+        const community = att ? resolveCommunityAnswer(att.type || 'single', att.baselinePoll, att.humanVotes || []) : null;
+        const answer = community?.answer || att?.fuoAi?.answer || revItem?.answer || '';
         if (!answer) {
           ungradedCount++;
           continue;
         }
-        const source = voteAnswer ? (votes.length === 1 ? '1 bình luận' : 'đa số bình luận') : (rev?.source || 'lịch sử đã chấm');
+        const origin = community ? community.origin : (att?.fuoAi?.answer ? 'fuo-ai' : 'ai');
+        const source = community ? community.source : (att?.fuoAi?.answer ? 'FUO AI (bình luận ghim)' : (revItem?.source || 'lịch sử đã chấm'));
         gradedCount++;
         const isRight = answer === selected;
         if (isRight) rightCount++;
@@ -306,10 +376,13 @@
         if (att) {
           att.selected = selected;
           att.answer = answer;
-          att.answerOrigin = voteAnswer ? 'comments' : 'ai';
+          att.answerOrigin = origin;
+          att.revealed = true;
           att.message = (isRight ? 'Đúng' : 'Sai') + ' · Nguồn ' + source;
         }
-        const item = review.get(key) || {};
+        const item = store.questions.get(key) || {};
+        item.title = catalog.get(key)?.title || item.title || key;
+        item.index = catalog.get(key)?.index || item.index || 0;
         item.selected = selected;
         item.answer = answer;
         item.source = source;
@@ -318,9 +391,9 @@
           item.wrong = true;
           item.wrongSelected = selected;
         }
-        review.set(key, item);
+        store.questions.set(key, item);
       }
-      if (gradedCount > 0) saveReview();
+      if (gradedCount > 0) saveReview(question?.exam || activeExamInfo);
       examMode.summary = { timedOut, elapsed, gradedCount, rightCount, ungradedCount, wrongList };
       render();
     }
@@ -346,14 +419,14 @@
       examMode.startedAt = Date.now();
       examMode.endsAt = examMode.startedAt + Math.round(minutes * 60 * 1000);
       examMode.active = true;
-      showComments = false;
-      syncComments();
       for (const att of attempts.values()) {
         att.selected = '';
         att.answer = '';
         att.answerOrigin = '';
         att.aiText = '';
         att.message = '';
+        att.revealed = false;
+        att.retrying = true;
       }
       stopExamTimer();
       examMode.timerId = setInterval(() => {
@@ -390,7 +463,8 @@
     }
 
     function startReviewRound() {
-      const queue = orderedReviewKeys(item => Boolean(item.wrong || item.starred));
+      const exam = question?.exam || activeExamInfo;
+      const queue = orderedReviewKeys(exam, item => Boolean(item.wrong || item.starred));
       if (!queue.length) return;
       if (examMode.active) {
         stopExamTimer();
@@ -408,10 +482,12 @@
           att.answerOrigin = '';
           att.aiText = '';
           att.message = '';
+          att.revealed = false;
+          att.retrying = true;
         }
       }
       if (!question || question.key !== queue[0]) {
-        jumpToQuestion(root, queue[0]);
+        jumpToQuestion(ctx, queue[0]);
       }
       render();
     }
@@ -428,46 +504,11 @@
       render();
     };
 
-    function syncComments() {
-      const content = sidebar.querySelector('.fancybox-sidebar-content');
-      const matchesQuestion = question &&
-        content?.querySelector('.xfmgInfoBlock-title h2')?.textContent.trim() === question.title;
-      content?.classList.toggle('fuo-comments-visible', Boolean(!examMode.active && showComments && matchesQuestion));
-      comments.textContent = showComments ? 'Ẩn bình luận' : 'Hiện bình luận';
-      comments.setAttribute('aria-expanded', String(showComments));
-    }
-    comments.onclick = () => {
-      if (examMode.active) return;
-      showComments = !showComments;
-      syncComments();
+    commentsBtn.onclick = () => {
+      if (examMode.active || !state) return;
+      state.revealed = !state.revealed;
+      render();
     };
-    const buttons = letters.map(letter => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.onclick = () => {
-        if (!state?.type || state.busy || state.aiBusy) return;
-        if (examMode.active) {
-          if (state.type === 'single') {
-            state.selected = state.selected === letter ? '' : letter;
-          } else {
-            state.selected = state.selected.includes(letter)
-              ? state.selected.replace(letter, '') : normalize(state.selected + letter);
-          }
-          if (state.selected) examMode.answers.set(question.key, state.selected);
-          else examMode.answers.delete(question.key);
-          render();
-          return;
-        }
-        if (state.answer) return;
-        if (state.type === 'single') { state.selected = letter; grade(); }
-        else {
-          state.selected = state.selected.includes(letter)
-            ? state.selected.replace(letter, '') : normalize(state.selected + letter);
-          render();
-        }
-      };
-      return button;
-    });
 
     function nextJumpTarget(list) {
       if (!list.length) return '';
@@ -486,8 +527,8 @@
         render();
         return;
       }
-      if (!jumpToQuestion(root, targetKey)) {
-        const label = (catalog.get(targetKey)?.title || targetKey.split(' | ')[0]).replace(/\.[^.]+$/, '');
+      if (!jumpToQuestion(ctx, targetKey)) {
+        const label = (catalog.get(targetKey)?.title || currentReview(question?.exam).get(targetKey)?.title || targetKey.split(' | ')[0]).replace(/\.[^.]+$/, '');
         state.message = 'Không tìm thấy slide của ' + label + ' trong thư viện ảnh hiện tại.';
         render();
       }
@@ -499,7 +540,7 @@
     jumpStarredBtn.onclick = () => handleJump(currentStarredKeys);
 
     function renderProgress() {
-      const stats = computeProgress();
+      const stats = computeProgress(question?.exam || activeExamInfo, question);
       currentWrongKeys = stats.wrongKeys;
       currentStarredKeys = stats.starredKeys;
       const hasAny = stats.total > 0 || stats.answered > 0 || stats.wrongKeys.length > 0 || stats.starredKeys.length > 0;
@@ -533,56 +574,52 @@
     }
 
     function render() {
+      attachPanel();
       panel.hidden = !state;
-      if (!state) return;
-      title.textContent = question.title.replace(/\.[^.]+$/, '') + (state.type ? (state.type === 'multiple' ? ' · Chọn nhiều đáp án' : ' · Chọn một đáp án') : ' · Đang phân loại');
+      if (!state || !question) {
+        syncNativeDOM();
+        return;
+      }
+      const livePoll = syncNativeDOM();
+      const nativeMultiOn = Boolean(livePoll?.multiSwitchOn);
+      const isMulti = state.type === 'multiple' || nativeMultiOn;
+
+      title.textContent = question.title + (state.type
+        ? (state.type === 'multiple' ? ' · Chọn nhiều đáp án' : ' · Chọn một đáp án')
+        : ' · Đang phân loại');
       renderExamBar();
       renderExamSummary();
       renderReviewBar();
       renderProgress();
-      submit.hidden = examMode.active || state.type !== 'multiple';
+
+      multiHint.hidden = !( !examMode.active && state.type === 'multiple' && !nativeMultiOn && !state.answer );
+      if (!multiHint.hidden) {
+        multiHint.textContent = 'Câu chọn nhiều — bật "Nhiều đáp án" bên dưới rồi chọn và bấm Chấm đáp án.';
+      }
+
+      submit.hidden = examMode.active || !isMulti;
       submit.disabled = Boolean(!state.selected || state.busy || state.aiBusy || state.answer);
       retry.hidden = !state.typeError;
       retry.disabled = Boolean(state.busy);
-      distribution.replaceChildren();
-      if (!examMode.active && state.answer && state.votes.length) {
-        const counts = new Map();
-        state.votes.forEach(v => counts.set(v, (counts.get(v) || 0) + 1));
-        const label = document.createElement('div');
-        label.textContent = 'Tỷ lệ bình luận (không phải xác suất đúng)';
-        distribution.append(label);
-        for (const [vote, count] of [...counts].sort((a, b) => b[1] - a[1])) {
-          const row = document.createElement('div');
-          const ratio = count / state.votes.length * 100;
-          row.textContent = [...vote].join(',') + ': ' + Number(ratio.toFixed(1)) + '% ';
-          const meter = document.createElement('meter');
-          meter.min = 0; meter.max = 100; meter.value = ratio;
-          meter.setAttribute('aria-label', [...vote].join(','));
-          row.append(meter); distribution.append(row);
-        }
-      }
-      for (const [index, button] of buttons.entries()) {
-        const letter = letters[index];
-        const selected = state.selected.includes(letter);
-        const right = !examMode.active && state.answer.includes(letter);
-        const wrong = !examMode.active && state.answer && selected && !right;
-        button.textContent = letter + (right ? ' ✓' : wrong ? ' ✗' : '');
-        button.dataset.mark = right ? 'right' : wrong ? 'wrong' : '';
-        button.setAttribute('aria-pressed', String(selected));
-        button.disabled = Boolean(!state.type || state.busy || state.aiBusy || (!examMode.active && state.answer));
-      }
-      const starred = Boolean(review.get(question.key)?.starred);
+
+      const store = getReviewStore(question.exam);
+      const starred = Boolean(store.questions.get(question.key)?.starred);
       star.textContent = starred ? '★ Đã đánh dấu' : '☆ Đánh dấu';
       star.setAttribute('aria-pressed', String(starred));
       star.title = 'Đánh dấu câu nghi vấn để ôn lại (S)';
-      comments.disabled = examMode.active;
-      reset.disabled = state.busy || state.aiBusy || !state.selected;
+      commentsBtn.disabled = examMode.active;
+      reset.disabled = Boolean(state.busy || state.aiBusy || (!state.selected && !state.answer));
       ai.disabled = Boolean(examMode.active || state.busy || state.aiBusy);
       ai.textContent = state.aiBusy ? 'Đang hỏi ' + getActiveProvider().name + '…' : 'Xem đáp án AI';
       examButton.hidden = examMode.active;
+
       aiResult.hidden = examMode.active || !state.aiText;
-      const disagreement = state.answer && state.answerOrigin === 'comments' && state.aiSolution && state.aiSolution.answer !== state.answer
-        ? '\n\nLưu ý: AI chọn ' + [...state.aiSolution.answer].join(',') + ', khác đáp án bình luận ' + [...state.answer].join(',') + '. Kết quả chấm vẫn theo bình luận.' : '';
+      const fuoAiDiffers = !examMode.active && state.answer && (state.answerOrigin === 'poll' || state.answerOrigin === 'comments') && state.fuoAi?.answer && state.fuoAi.answer !== state.answer
+        ? ' Lưu ý: FUO AI chọn ' + [...state.fuoAi.answer].join(',') + ', khác đáp án cộng đồng ' + [...state.answer].join(',') + '.'
+        : '';
+      const disagreement = state.answer && (state.answerOrigin === 'poll' || state.answerOrigin === 'comments' || state.answerOrigin === 'fuo-ai') && state.aiSolution && state.aiSolution.answer !== state.answer
+        ? '\n\nLưu ý: AI chọn ' + [...state.aiSolution.answer].join(',') + ', khác đáp án ' + [...state.answer].join(',') + '. Kết quả chấm vẫn giữ nguyên.'
+        : '';
       const aiText = (state.aiText || '') + (state.aiText && disagreement ? disagreement : '');
       if (aiResult.dataset.source !== aiText) {
         aiResult.dataset.source = aiText;
@@ -642,13 +679,19 @@
           });
         }
       }
+
+      const defaultMsg = state.type
+        ? (isMulti
+          ? (state.selected ? 'Đã chọn: ' + [...state.selected].join(',') + ' — bấm Chấm đáp án để kiểm tra.' : 'Chọn các đáp án bên dưới rồi bấm Chấm đáp án.')
+          : 'Bấm trực tiếp phương án bên dưới để chấm ngay.')
+        : 'Đang phân loại câu hỏi…';
       status.textContent = examMode.active
         ? (state.selected ? 'Đã lưu lựa chọn ' + [...state.selected].join(',') + ' (chưa chấm).' : 'Chế độ thi thử: chọn đáp án rồi chuyển câu tiếp.')
-        : (state.message || (state.type === 'multiple' ? 'Chọn các đáp án rồi bấm Submit.' : 'Bấm một đáp án để chấm ngay.'));
+        : ((state.message || defaultMsg) + (state.message && fuoAiDiffers ? fuoAiDiffers : ''));
     }
 
     ai.onclick = async () => {
-      const target = currentQuestion(root);
+      const target = currentQuestion(ctx);
       if (!state || !target || target.key !== question.key || state.busy || state.aiBusy) return;
       if (state.aiSolution && state.aiSelected === normalize(state.selected || '') && state.aiConfigSig === configSignature(getActiveProvider())) {
         state.aiText = aiSolutionText(state.aiSolution);
@@ -671,17 +714,20 @@
     };
 
     reset.onclick = () => {
+      if (!state) return;
       state.selected = '';
       if (examMode.active && question) examMode.answers.delete(question.key);
       state.aiText = '';
       state.answer = '';
       state.answerOrigin = '';
       state.message = '';
+      state.revealed = false;
+      state.retrying = true;
       render();
     };
 
     async function grade() {
-      const target = currentQuestion(root);
+      const target = currentQuestion(ctx);
       if (!state || !target || target.key !== question.key || !state.type || !state.selected || state.busy || state.aiBusy || state.answer) return;
       const submission = state;
       const selected = submission.selected;
@@ -689,42 +735,50 @@
       submission.message = 'Đang kiểm tra đáp án…';
       render();
       try {
-        const votes = submission.votes;
-        let answer = consensus(votes);
-        let source = votes.length === 1 ? '1 bình luận' : 'đa số bình luận';
-        let usedAI = false;
-        if (!answer) {
-          const solution = await loadAISolution(target, submission);
-          answer = solution.answer;
-          submission.aiText = aiSolutionText(solution);
-          source = (solution.providerName || 'AI') + ' · đáp án tham khảo';
-          usedAI = true;
+        const resolved = await resolveAnswer(target, submission);
+        if (resolved.solution) {
+          submission.aiText = aiSolutionText(resolved.solution);
         }
-        submission.answer = answer;
-        submission.answerOrigin = usedAI ? 'ai' : 'comments';
-        const item = review.get(target.key) || {};
+        submission.answer = resolved.answer;
+        submission.answerOrigin = resolved.origin;
+        submission.revealed = true;
+        const store = getReviewStore(target.exam);
+        const item = store.questions.get(target.key) || {};
+        item.title = target.title;
+        item.index = target.index || item.index || 0;
         item.selected = selected;
-        item.answer = answer;
-        item.source = source;
-        item.url = target.image?.src || item.url || '';
-        if (answer !== selected) {
+        item.answer = resolved.answer;
+        item.source = resolved.source;
+        item.url = target.mediaUrl || target.image?.src || item.url || '';
+        if (resolved.answer !== selected) {
           item.wrong = true;
           item.wrongSelected = selected;
         }
-        review.set(target.key, item);
-        saveReview();
-        const result = answer === selected ? 'Đúng' : 'Sai';
-        if (reviewRound.active && answer === selected) {
+        store.questions.set(target.key, item);
+        saveReview(target.exam);
+        const result = resolved.answer === selected ? 'Đúng' : 'Sai';
+        if (reviewRound.active && resolved.answer === selected) {
           reviewRound.remaining.delete(target.key);
         }
-        submission.message = result + ' · Nguồn ' + source;
+        submission.message = result + ' · Nguồn ' + resolved.source;
       } catch (error) {
         submission.message = error.message || 'Chưa chấm được câu này.';
       } finally {
         submission.busy = false;
-        maybeExport();
+        maybeExport(target, submission);
         if (state === submission) render();
       }
+    }
+
+    function captureBaseline(submission, excludeOwn) {
+      const poll = readPollData(ctx.sidebar, excludeOwn);
+      const commentsContainer = findCommentsContainer(ctx.sidebar);
+      const fuoAi = readFuoAI(commentsContainer);
+      const humanVotes = readHumanComments(commentsContainer, fuoAi?.element || null);
+      submission.baselinePoll = poll;
+      submission.fuoAi = fuoAi;
+      submission.humanVotes = humanVotes;
+      return { poll, fuoAi, humanVotes };
     }
 
     async function prepare(target, submission) {
@@ -734,12 +788,10 @@
       submission.message = 'Đang phân loại câu hỏi…';
       render();
       try {
-        const content = await waitForComments(root, target);
-        if (!content) throw new Error('Bình luận chưa tải xong. Bấm Thử lại phân loại.');
-        submission.votes = readVotes(content);
-        submission.type = submission.votes.length
-          ? (submission.votes.some(v => v.length > 1) ? 'multiple' : 'single')
-          : await classifyImage(target.image);
+        const ready = await waitForQuestionReady(ctx, target);
+        if (!ready) throw new Error('Bình luận chưa tải xong. Bấm Thử lại phân loại.');
+        const { poll, fuoAi, humanVotes } = captureBaseline(submission, true);
+        submission.type = await classifyQuestion(poll, humanVotes, fuoAi, target.image);
         submission.message = '';
       } catch (error) {
         submission.typeError = true;
@@ -750,10 +802,76 @@
       }
     }
 
+    function refreshAsyncBaseline() {
+      if (!question || !state || state.busy || state.answer || state.selected || state.retrying || !state.type) return;
+      if (!isSlideSynced(ctx, question) || isPollLoading(ctx.sidebar)) return;
+      const { poll, fuoAi, humanVotes } = captureBaseline(state, true);
+      const totalOptionVotes = poll ? poll.options.reduce((sum, o) => sum + o.communityCount, 0) : 0;
+      if (state.type === 'single' && (
+        humanVotes.some(v => v.length > 1) ||
+        (fuoAi?.answer && fuoAi.answer.length > 1) ||
+        poll?.multiSwitchOn ||
+        poll?.options.some(o => o.key.length > 1 && o.communityCount > 0) ||
+        (poll && poll.communityTotalVoters > 0 && totalOptionVotes > poll.communityTotalVoters)
+      )) {
+        state.type = 'multiple';
+        render();
+      }
+    }
+
+    // Capture-phase delegation runs BEFORE React mutates poll counts/aria-pressed.
+    ctx.sidebar.addEventListener('click', event => {
+      const targetEl = event.target instanceof Element ? event.target : null;
+      if (!targetEl) return;
+      if (targetEl.closest('section[aria-label="Bình chọn đáp án"] button[role="switch"]')) {
+        requestAnimationFrame(render);
+        return;
+      }
+      const optionBtn = targetEl.closest('section[aria-label="Bình chọn đáp án"] [role="group"][aria-label="Các phương án"] button[aria-pressed]');
+      if (!optionBtn) return;
+      if (!question || !state || !state.type || state.busy || state.aiBusy) return;
+      if (!isSlideSynced(ctx, question)) return;
+      if (!state.baselinePoll) {
+        captureBaseline(state, true);
+      }
+      const letter = parsePollOptionLetter(optionBtn);
+      if (!letter) return;
+      if (examMode.active) {
+        if (state.type === 'single') {
+          state.selected = state.selected === letter ? '' : letter;
+        } else if (letter.length === 1) {
+          state.selected = state.selected.includes(letter)
+            ? state.selected.replace(letter, '') : normalize(state.selected + letter);
+        } else {
+          state.selected = state.selected === letter ? '' : letter;
+        }
+        if (state.selected) examMode.answers.set(question.key, state.selected);
+        else examMode.answers.delete(question.key);
+        render();
+        return;
+      }
+      if (state.answer) return;
+      const livePoll = readPollData(ctx.sidebar, false);
+      const isMulti = state.type === 'multiple' || Boolean(livePoll?.multiSwitchOn);
+      state.retrying = false;
+      if (!isMulti) {
+        state.selected = letter;
+        grade();
+      } else {
+        if (letter.length === 1) {
+          state.selected = state.selected.includes(letter)
+            ? state.selected.replace(letter, '')
+            : normalize(state.selected + letter);
+        } else {
+          state.selected = state.selected === letter ? '' : letter;
+        }
+        render();
+      }
+    }, true);
+
     panel.hidden = true;
-    options.append(...buttons);
-    panel.append(title, examBar, examSummary, reviewBar, progressBox, options, submit, retry, reset, comments, ai, aiSettings, star, exportButton, backupButton, examButton, status, distribution, aiResult);
-    sidebar.prepend(panel);
+    panel.append(title, examBar, examSummary, reviewBar, progressBox, multiHint, submit, retry, reset, commentsBtn, ai, aiSettings, star, exportButton, backupButton, examButton, status, aiResult);
+    attachPanel();
 
     function onQuizKeyDown(event) {
       if (!panel.isConnected) {
@@ -774,19 +892,24 @@
       }
       if (key.length !== 1) return;
       const upper = key.toUpperCase();
+      const pollOpts = readPollData(ctx.sidebar, false)?.options || [];
       const letterIdx = letters.indexOf(upper);
-      if (letterIdx !== -1 && !buttons[letterIdx].disabled) {
-        event.preventDefault();
-        buttons[letterIdx].click();
-        return;
-      }
-      if (upper >= '1' && upper <= '8') {
-        const idx = Number(upper) - 1;
-        if (!buttons[idx].disabled) {
+      const canChoose = Boolean(state.type && !state.busy && !state.aiBusy && (examMode.active || !state.answer));
+      if (letterIdx !== -1 && canChoose) {
+        const match = pollOpts.find(o => o.key === upper) || pollOpts[letterIdx];
+        if (match && !match.button.disabled) {
           event.preventDefault();
-          buttons[idx].click();
+          match.button.click();
+          return;
         }
-        return;
+      }
+      if (upper >= '1' && upper <= '8' && canChoose) {
+        const idx = Number(upper) - 1;
+        if (pollOpts[idx] && !pollOpts[idx].button.disabled) {
+          event.preventDefault();
+          pollOpts[idx].button.click();
+          return;
+        }
       }
       if (upper === 'R' && !reset.disabled) {
         event.preventDefault();
@@ -794,10 +917,10 @@
       } else if (upper === 'S') {
         event.preventDefault();
         star.click();
-      } else if (upper === 'M' || (upper === 'C' && buttons[2].disabled)) {
+      } else if (upper === 'M' && !commentsBtn.disabled) {
         event.preventDefault();
-        comments.click();
-      } else if ((upper === 'I' || (upper === 'E' && buttons[4].disabled)) && !ai.disabled) {
+        commentsBtn.click();
+      } else if ((upper === 'I' || (upper === 'E' && pollOpts.length < 5)) && !ai.disabled) {
         event.preventDefault();
         ai.click();
       }
@@ -805,7 +928,7 @@
     document.addEventListener('keydown', onQuizKeyDown);
 
     function onAIConfigChange() {
-      if (!panel.isConnected) {
+      if (!ctx.sidebar.isConnected) {
         aiConfigListeners.delete(onAIConfigChange);
         return;
       }
@@ -818,22 +941,38 @@
       render();
     }
     aiConfigListeners.add(onAIConfigChange);
+
     return () => {
-      const next = currentQuestion(root);
-      if (next) discoverQuestions(next);
+      const next = currentQuestion(ctx);
+      if (next?.exam) activeExamInfo = next.exam;
+      if (next) discoverQuestions(ctx, next);
       if (question?.key === next?.key) {
-        const content = sidebar.querySelector('.fancybox-sidebar-content');
-        const visible = Boolean(showComments && question &&
-          content?.querySelector('.xfmgInfoBlock-title h2')?.textContent.trim() === question.title);
-        content?.classList.toggle('fuo-comments-visible', visible);
-        renderProgress();
+        refreshAsyncBaseline();
+        render();
         return;
       }
       question = next;
-      showComments = false;
-      syncComments();
       if (question && !attempts.has(question.key)) {
-        attempts.set(question.key, { selected: '', answer: '', message: '', busy: false, aiBusy: false, aiText: '', aiSolution: null, aiPending: null, aiConfigSig: '', aiPendingSig: '', answerOrigin: '', type: '', typeError: false, votes: [] });
+        attempts.set(question.key, {
+          selected: '',
+          answer: '',
+          message: '',
+          busy: false,
+          aiBusy: false,
+          aiText: '',
+          aiSolution: null,
+          aiPending: null,
+          aiConfigSig: '',
+          aiPendingSig: '',
+          answerOrigin: '',
+          type: '',
+          typeError: false,
+          revealed: false,
+          retrying: false,
+          baselinePoll: null,
+          fuoAi: null,
+          humanVotes: []
+        });
       }
       state = question ? attempts.get(question.key) : null;
       render();
@@ -848,14 +987,25 @@
     pending = true;
     requestAnimationFrame(() => {
       pending = false;
-      for (const root of document.querySelectorAll('.fancybox__container')) {
-        const sidebar = root.querySelector('.fancybox-sidebar');
-        if (!sidebar) continue;
-        if (!sidebars.has(sidebar)) sidebars.set(sidebar, mount(root, sidebar));
-        sidebars.get(sidebar)();
+      for (const ctx of findActiveContainers()) {
+        if (!sidebars.has(ctx.sidebar)) sidebars.set(ctx.sidebar, mount(ctx));
+        sidebars.get(ctx.sidebar)();
       }
     });
   }
+
+  for (const method of ['pushState', 'replaceState']) {
+    const orig = history[method];
+    if (typeof orig === 'function') {
+      history[method] = function (...args) {
+        const res = orig.apply(this, args);
+        schedule();
+        return res;
+      };
+    }
+  }
+  window.addEventListener('popstate', schedule);
+
   // Ignore mutations caused by our own panel/dialogs to avoid a render feedback loop.
   const isOwnNode = node => {
     const el = node instanceof Element ? node : node?.parentElement;
@@ -865,7 +1015,10 @@
     if (records.every(r => isOwnNode(r.target))) return;
     schedule();
   }).observe(document, {
-    subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'src', 'href', 'data-caption', 'alt']
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['class', 'src', 'href', 'alt', 'aria-pressed', 'aria-checked', 'aria-busy', 'aria-current', 'aria-label', 'open']
   });
   window.addEventListener('resize', schedule);
   schedule();

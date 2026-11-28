@@ -4,6 +4,15 @@
   const store = Object.create(null);
   const menuCommands = new Map();
 
+  function base64ToBlob(base64, contentType) {
+    const binary = atob(base64 || '');
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: contentType || 'application/octet-stream' });
+  }
+
   window.GM_addStyle = css => {
     const style = document.createElement('style');
     style.textContent = String(css || '');
@@ -42,7 +51,8 @@
           url: args.url,
           headers: args.headers || {},
           data: args.data,
-          timeout: args.timeout || 60000
+          timeout: args.timeout || 60000,
+          responseType: args.responseType || ''
         }
       },
       response => {
@@ -61,7 +71,8 @@
         args?.onload?.({
           status: response.status,
           statusText: response.statusText || '',
-          responseText: response.responseText || ''
+          responseText: response.responseText || '',
+          response: response.responseType === 'blob' ? base64ToBlob(response.base64, response.contentType) : undefined
         });
       }
     );

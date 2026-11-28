@@ -25,7 +25,7 @@
 
   function commentText(body) {
     const copy = body.cloneNode(true);
-    copy.querySelectorAll('.bbCodeBlock--quote').forEach(node => node.remove());
+    copy.querySelectorAll('blockquote, .bbCodeBlock--quote').forEach(node => node.remove());
     copy.querySelectorAll('br').forEach(node => node.replaceWith('\n'));
     copy.querySelectorAll('p, div, li').forEach(node => node.append('\n'));
     return copy.textContent;
@@ -199,7 +199,8 @@
         worker = await ocrTimeout(startup, () => {
           startup.then(w => w.terminate()).catch(() => {});
         });
-        const { data } = await ocrTimeout(worker.recognize(url));
+        const payload = await prepareImagePayload(image);
+        const { data } = await ocrTimeout(worker.recognize(payload.dataUrl));
         const detected = multipleInstruction(data.text || '') ? 'multiple' : 'single';
         rememberOcrType(cacheKey, detected);
         return detected;
@@ -215,33 +216,53 @@
     return task;
   }
 
-  function currentQuestion(root) {
-    const slide = root.querySelector('.fancybox__slide.is-selected');
-    const image = slide?.querySelector('img.fancybox-image');
-    if (!image) return null;
-    const imgStable = stableImageURL(image.src);
-    const source = pageLinks().find(a => stableImageURL(a.href) === imgStable);
-    // Compact Fancybox moves the caption outside the selected slide.
-    const title = slide.querySelector('.fancybox__caption h4')?.textContent.trim()
-      || (source && attachmentTitle(source))
-      || root.querySelector('.fancybox__caption h4')?.textContent.trim();
-    if (!questionImage.test(title ?? '')) return null;
-    return { title, image, key: questionKey(title, image.src), mediaURL: source?.getAttribute('data-lb-sidebar-href') };
+  function isAllowedImageUrl(url) {
+    if (url.protocol === 'blob:') return true;
+    if (url.origin !== 'null' && url.origin === location.origin) return true;
+    return url.protocol === 'https:' && (url.hostname === 'cdn.fuoverflow.com' || url.hostname === 'fuoverflow.com');
   }
 
-  function readVotes(sidebar) {
-    const authors = new Set();
-    const votes = [];
-    for (const comment of sidebar?.querySelectorAll('.js-comment') ?? []) {
-      const author = comment.getAttribute('data-author');
-      const body = comment.querySelector('.comment-body .bbWrapper');
-      if (!body || (author && authors.has(author))) continue;
-      const vote = commentVote(commentText(body));
-      if (!vote) continue;
-      if (author) authors.add(author);
-      votes.push(vote);
+  function gmFetchImageBlob(url) {
+    return new Promise((resolve, reject) => {
+      try {
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: url.href,
+          responseType: 'blob',
+          anonymous: true,
+          timeout: 15000,
+          onload(result) {
+            if (result?.status === 200 && result.response instanceof Blob) {
+              resolve(result.response);
+            } else {
+              reject(new Error('Không tải được ảnh câu hỏi.'));
+            }
+          },
+          onerror() {
+            reject(new Error('Không tải được ảnh câu hỏi.'));
+          },
+          ontimeout() {
+            reject(new Error('Không tải được ảnh câu hỏi.'));
+          }
+        });
+      } catch {
+        reject(new Error('Không tải được ảnh câu hỏi.'));
+      }
+    });
+  }
+
+  async function fetchImageBlob(url) {
+    const isSameOriginOrBlob = url.protocol === 'blob:' || url.origin === location.origin;
+    if (isSameOriginOrBlob) {
+      const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      if (!response.ok) throw new Error('Không tải được ảnh câu hỏi.');
+      return response.blob();
     }
-    return votes;
+    try {
+      const response = await fetch(url, { mode: 'cors', signal: AbortSignal.timeout(15000) });
+      if (response.ok) return response.blob();
+    } catch {}
+    return gmFetchImageBlob(url);
   }
 
   async function prepareImagePayload(image) {
@@ -252,12 +273,10 @@
     } catch {
       throw new Error('Không đọc được ảnh câu hỏi từ thread.');
     }
-    if (url.origin === 'null' || url.origin !== location.origin) {
+    if (!isAllowedImageUrl(url)) {
       throw new Error('Không đọc được ảnh câu hỏi từ thread.');
     }
-    const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-    if (!response.ok) throw new Error('Không tải được ảnh câu hỏi.');
-    const blob = await response.blob();
+    const blob = await fetchImageBlob(url);
     if (!/^image\/(webp|jpeg|png|gif)$/i.test(blob.type || '')) {
       throw new Error('Ảnh có định dạng không được hỗ trợ.');
     }
@@ -559,17 +578,373 @@
     }
   }
 
-  async function waitForComments(root, target) {
-    const deadline = Date.now() + 3000;
-    while (currentQuestion(root)?.key === target.key && root.isConnected) {
-      const content = root.querySelector('.fancybox-sidebar-content');
-      const mediaPath = target.mediaURL && new URL(target.mediaURL, location.href).pathname;
-      const matchesMedia = !mediaPath || [...(content?.querySelectorAll('a[href]') || [])]
-        .some(a => new URL(a.href).pathname.startsWith(mediaPath));
-      if (matchesMedia && content?.querySelector('.xfmgInfoBlock-title h2')?.textContent.trim() === target.title &&
-          !content.matches('[aria-busy="true"], .is-loading') &&
-          !content.querySelector('[aria-busy="true"], .is-loading')) {
-        return content;
+  function findActiveContainers() {
+    const results = [];
+    const dialogs = [...document.querySelectorAll('dialog')].filter(dlg => {
+      if (!dlg.isConnected) return false;
+      const aside = dlg.querySelector('aside[aria-label="Thảo luận về ảnh"]');
+      if (!aside) return false;
+      return dlg.open || dlg.hasAttribute('open') || getComputedStyle(dlg).display !== 'none';
+    });
+    for (const dlg of dialogs) {
+      const aside = dlg.querySelector('aside[aria-label="Thảo luận về ảnh"]');
+      if (aside) results.push({ mode: 'lightbox', root: dlg, sidebar: aside });
+    }
+    if (!results.length && location.pathname.startsWith('/media/')) {
+      const main = document.querySelector('main');
+      const blocked = main?.querySelector('[role="note"][aria-label*="thành viên có gói"], [role="note"][aria-label*="bình luận đang ẩn"]');
+      const hasMediaUi = main && (
+        main.querySelector('section[aria-label="Bình chọn đáp án"]') ||
+        main.querySelector('section[aria-label="Bình luận về ảnh"]') ||
+        main.querySelector('[aria-label*="Đang tải bình chọn"]')
+      );
+      if (main && hasMediaUi && !blocked) {
+        results.push({ mode: 'standalone', root: main, sidebar: main });
+      }
+    }
+    return results;
+  }
+
+  function parseCounter(root) {
+    const polite = root.querySelector('p[aria-live="polite"]')?.textContent || '';
+    let match = polite.match(/(\d+)\s*\/\s*(\d+)/);
+    if (match) return { index: Number(match[1]), total: Number(match[2]) };
+
+    const metaText = root.querySelector('aside[aria-label="Thảo luận về ảnh"]')?.textContent
+      || root.querySelector('h1')?.textContent
+      || root.querySelector('figcaption')?.textContent
+      || '';
+    match = metaText.match(/ảnh\s+(\d+)\s*\/\s*(\d+)/i);
+    if (match) return { index: Number(match[1]), total: Number(match[2]) };
+
+    const thumbCount = root.querySelectorAll('nav[aria-label="Ảnh thu nhỏ"] li').length;
+    return { index: null, total: thumbCount || null };
+  }
+
+  function formatQuestionTitle(mediaPath, index, total) {
+    const slugWithId = (mediaPath || '').replace(/^\/media\/|\/$/g, '');
+    const slug = slugWithId.replace(/\.\d+$/, '');
+    const base = slug.replace(/-(?:webp|jpe?g|png|gif|avif)$/i, '');
+    const qMatch = base.match(/^q(\d+)$/i);
+    if (qMatch) return 'Q' + qMatch[1];
+    if (base && !/^[0-9a-f]{16,}$/i.test(base)) {
+      return base.replace(/-(\d+)$/, ' ($1)');
+    }
+    if (index) return 'Câu ' + index + (total ? '/' + total : '');
+    return 'Câu hỏi';
+  }
+
+  function currentQuestion(ctx) {
+    const root = ctx.root;
+    const isLightbox = ctx.mode === 'lightbox';
+    const image = isLightbox
+      ? (root.querySelector('img[data-lightbox-img]') || root.querySelector('div.touch-none img') || root.querySelector('img'))
+      : (root.querySelector('figure img') || root.querySelector('img[data-lightbox-img]'));
+    if (!image) return null;
+
+    let mediaPath = '';
+    if (isLightbox) {
+      const openLink = root.querySelector('a[aria-label="Mở trang ảnh"]')?.getAttribute('href');
+      if (openLink) {
+        try { mediaPath = new URL(openLink, location.origin).pathname; } catch {}
+      }
+      if (!mediaPath && location.pathname.startsWith('/media/')) {
+        mediaPath = location.pathname;
+      }
+    } else if (location.pathname.startsWith('/media/')) {
+      mediaPath = location.pathname;
+    }
+
+    if (!mediaPath) return null;
+    const key = mediaPath.replace(/^\/media\/|\/$/g, '') || mediaPath;
+    const { index, total } = parseCounter(root);
+    const title = formatQuestionTitle(mediaPath, index, total);
+    return {
+      key,
+      title,
+      mediaPath,
+      mediaUrl: location.origin + mediaPath,
+      index,
+      total,
+      image,
+      exam: getExamInfo(root)
+    };
+  }
+
+  function findPollSection(container) {
+    return container?.querySelector('section[aria-label="Bình chọn đáp án"]') || null;
+  }
+
+  function isPollLoading(container) {
+    if (!container) return true;
+    if (container.matches('[aria-busy="true"], .is-loading')) return true;
+    if (container.querySelector('[aria-label*="Đang tải bình chọn"], [aria-busy="true"], .is-loading')) return true;
+    return !findPollSection(container);
+  }
+
+  function findCommentsContainer(container) {
+    if (!container) return null;
+    const standalone = container.querySelector('section[aria-label="Bình luận về ảnh"]');
+    if (standalone) return standalone;
+    const aside = container.matches('aside[aria-label="Thảo luận về ảnh"]')
+      ? container
+      : container.querySelector('aside[aria-label="Thảo luận về ảnh"]');
+    const searchRoot = aside || container;
+    const byStructure = searchRoot.querySelector('div:has(> div > h2):has(ul[aria-label="Bình luận"], [role="textbox"])');
+    if (byStructure) return byStructure;
+    const list = searchRoot.querySelector('ul[aria-label="Bình luận"]');
+    if (list?.parentElement) return list.parentElement;
+    for (const h2 of searchRoot.querySelectorAll('h2')) {
+      if (/^\s*Bình luận\b/i.test(h2.textContent || '')) {
+        return h2.closest('section') || h2.parentElement?.parentElement || null;
+      }
+    }
+    return null;
+  }
+
+  function parsePollOptionLetter(button) {
+    const spans = button.querySelectorAll(':scope > span');
+    const badgeText = spans[1]?.textContent?.trim() || '';
+    if (badgeText) {
+      const norm = normalize(badgeText);
+      if (norm) return norm;
+    }
+    const aria = button.getAttribute('aria-label') || '';
+    const match = aria.match(/Phương án\s+([^,]+)/i);
+    return match ? normalize(match[1]) : '';
+  }
+
+  function parsePollOptionStats(button) {
+    const aria = button.getAttribute('aria-label') || '';
+    const ariaMatch = aria.match(/Phương án\s+[^,]+,\s*(\d+)\s+người chọn,\s*(\d+(?:\.\d+)?)%/i);
+    if (ariaMatch) {
+      return { rawCount: Number(ariaMatch[1]), percent: Number(ariaMatch[2]) };
+    }
+    const spans = button.querySelectorAll(':scope > span');
+    const statWrap = spans[spans.length - 1];
+    const nums = [...(statWrap?.querySelectorAll('span') || [])].map(s => s.textContent.trim());
+    const rawCount = Number((nums[0] || '').replace(/[^\d]/g, '')) || 0;
+    const percent = Number((nums[1] || '').replace(/[^\d.]/g, '')) || 0;
+    return { rawCount, percent };
+  }
+
+  function readPollData(container, excludeOwnPreExisting) {
+    const section = findPollSection(container);
+    if (!section) return null;
+    const headerText = section.querySelector('header p')?.textContent || '';
+    const totalVoters = Number(headerText.match(/\d+/)?.[0] || 0);
+    const multiSwitch = section.querySelector('button[role="switch"]');
+    const multiSwitchOn = multiSwitch?.getAttribute('aria-checked') === 'true';
+    const buttons = [...section.querySelectorAll('[role="group"][aria-label="Các phương án"] button[aria-pressed]')];
+    const options = [];
+    let hasPrePressed = false;
+    for (const button of buttons) {
+      const key = parsePollOptionLetter(button);
+      if (!key) continue;
+      const pressed = button.getAttribute('aria-pressed') === 'true';
+      if (pressed) hasPrePressed = true;
+      const { rawCount, percent } = parsePollOptionStats(button);
+      const communityCount = excludeOwnPreExisting && pressed && rawCount > 0 ? rawCount - 1 : rawCount;
+      options.push({ key, rawCount, communityCount, percent, pressed, button });
+    }
+    const communityTotalVoters = Math.max(0, totalVoters - (excludeOwnPreExisting && hasPrePressed ? 1 : 0));
+    return {
+      ready: true,
+      section,
+      totalVoters,
+      communityTotalVoters,
+      multiSwitch,
+      multiSwitchOn,
+      options
+    };
+  }
+
+  function isFuoAiElement(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el.matches('.fuo-quiz, .fuo-spoiler-notice, header') || el.querySelector('[role="textbox"], iframe, h2')) return false;
+    const text = el.textContent || '';
+    if (!/\bFUO\s*AI\b/i.test(text)) return false;
+    const userLinks = [...el.querySelectorAll('a[href^="/u/"]')];
+    const isAiAuthor = userLinks.length === 0 || userLinks.some(a => /fuo[-_]?ai/i.test(a.getAttribute('href') || '') || /\bFUO\s*AI\b/i.test(a.textContent || ''));
+    return isAiAuthor && (/Đã ghim/i.test(text) || /(?:^|\n)\s*Đáp án\s*[:=]/im.test(text) || isAiAuthor);
+  }
+
+  function extractFuoAiText(el) {
+    const rich = el.querySelector('.rich-text');
+    if (rich) return commentText(rich);
+    const copy = el.cloneNode(true);
+    copy.querySelectorAll('button, time').forEach(n => n.remove());
+    copy.querySelectorAll('br').forEach(n => n.replaceWith('\n'));
+    copy.querySelectorAll('p, div, li').forEach(n => n.append('\n'));
+    return copy.textContent
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(l => l && !/^(?:AI|FUO\s*AI|Đã ghim|Thích|\d+\s*(?:ngày|giờ|phút|giây|tuần|tháng|năm))$/i.test(l))
+      .join('\n');
+  }
+
+  function readFuoAI(commentsContainer) {
+    if (!commentsContainer) return null;
+    const candidates = [
+      ...commentsContainer.querySelectorAll('ul[aria-label="Bình luận"] > li'),
+      ...[...commentsContainer.children].filter(el => !el.matches('ul[aria-label="Bình luận"]'))
+    ];
+    for (const el of candidates) {
+      if (!isFuoAiElement(el)) continue;
+      const text = extractFuoAiText(el);
+      const answer = commentVote(text);
+      if (!answer) continue;
+      const explanation = text
+        .split(/\r?\n/)
+        .filter(line => !/^\s*(?:đáp án(?:\s+đúng)?|answer)\s*[:=]?\s*[A-H]/i.test(line))
+        .join('\n')
+        .trim();
+      return { answer, explanation, element: el };
+    }
+    return null;
+  }
+
+  function readHumanComments(commentsContainer, fuoAiElement) {
+    const authors = new Set();
+    const votes = [];
+    for (const li of commentsContainer?.querySelectorAll('ul[aria-label="Bình luận"] > li') ?? []) {
+      if (li === fuoAiElement || isFuoAiElement(li)) continue;
+      const authorLink = li.querySelector('a[href^="/u/"]');
+      const author = authorLink?.getAttribute('href') || authorLink?.textContent.trim() || '';
+      if (/\bFUO\s*AI\b/i.test(authorLink?.textContent || '')) continue;
+      const body = li.querySelector('.rich-text') || li.querySelector('.comment-body .bbWrapper');
+      if (!body || (author && authors.has(author))) continue;
+      const vote = commentVote(commentText(body));
+      if (!vote) continue;
+      if (author) authors.add(author);
+      votes.push(vote);
+    }
+    return votes;
+  }
+
+  async function classifyQuestion(poll, humanVotes, fuoAi, image) {
+    const totalOptionVotes = poll ? poll.options.reduce((sum, o) => sum + o.communityCount, 0) : 0;
+    const hasMultiEvidence = Boolean(
+      humanVotes.some(v => v.length > 1) ||
+      (fuoAi?.answer && fuoAi.answer.length > 1) ||
+      poll?.multiSwitchOn ||
+      poll?.options.some(o => o.key.length > 1 && o.communityCount > 0) ||
+      (poll && poll.communityTotalVoters > 0 && totalOptionVotes > poll.communityTotalVoters)
+    );
+    if (hasMultiEvidence) return 'multiple';
+    if ((poll && poll.communityTotalVoters > 0) || humanVotes.length > 0 || fuoAi?.answer) {
+      return 'single';
+    }
+    return classifyImage(image);
+  }
+
+  function resolveCommunityAnswer(type, poll, humanVotes) {
+    if (type === 'multiple') {
+      const multiComments = humanVotes.filter(v => v.length > 1);
+      if (multiComments.length) {
+        const winner = consensus(multiComments);
+        if (winner) {
+          return {
+            answer: winner,
+            origin: 'comments',
+            source: multiComments.length === 1 ? '1 bình luận' : 'đa số bình luận'
+          };
+        }
+      }
+      if (poll && poll.communityTotalVoters > 0) {
+        const comboEntries = poll.options.filter(o => o.key.length > 1 && o.communityCount > 0)
+          .sort((a, b) => b.communityCount - a.communityCount);
+        if (comboEntries.length && (!comboEntries[1] || comboEntries[0].communityCount > comboEntries[1].communityCount)) {
+          return {
+            answer: comboEntries[0].key,
+            origin: 'poll',
+            source: 'bình chọn cộng đồng (' + poll.communityTotalVoters + ' người)'
+          };
+        }
+        const singleEntries = poll.options.filter(o => o.key.length === 1);
+        const majorityLetters = singleEntries.filter(o => o.communityCount / poll.communityTotalVoters > 0.5);
+        const exactHalfAmbiguity = poll.communityTotalVoters > 1 && singleEntries.some(o => o.communityCount * 2 === poll.communityTotalVoters);
+        if (majorityLetters.length >= 2 && !exactHalfAmbiguity) {
+          const combined = normalize(majorityLetters.map(o => o.key).join(''));
+          if (combined) {
+            return {
+              answer: combined,
+              origin: 'poll',
+              source: 'bình chọn cộng đồng (' + poll.communityTotalVoters + ' người)'
+            };
+          }
+        }
+      }
+      return null;
+    }
+
+    if (poll && poll.communityTotalVoters > 0) {
+      const singleEntries = poll.options
+        .filter(o => o.key.length === 1 && o.communityCount > 0)
+        .sort((a, b) => b.communityCount - a.communityCount);
+      if (singleEntries.length && (!singleEntries[1] || singleEntries[0].communityCount > singleEntries[1].communityCount)) {
+        return {
+          answer: singleEntries[0].key,
+          origin: 'poll',
+          source: 'bình chọn cộng đồng (' + poll.communityTotalVoters + ' người)'
+        };
+      }
+      return null;
+    }
+
+    if (humanVotes.length) {
+      const winner = consensus(humanVotes);
+      if (winner) {
+        return {
+          answer: winner,
+          origin: 'comments',
+          source: humanVotes.length === 1 ? '1 bình luận' : 'đa số bình luận'
+        };
+      }
+    }
+    return null;
+  }
+
+  async function resolveAnswer(target, submission) {
+    const community = resolveCommunityAnswer(submission.type, submission.baselinePoll, submission.humanVotes);
+    if (community) return community;
+    if (submission.fuoAi?.answer) {
+      return {
+        answer: submission.fuoAi.answer,
+        origin: 'fuo-ai',
+        source: 'FUO AI (bình luận ghim)'
+      };
+    }
+    const solution = await loadAISolution(target, submission);
+    return {
+      answer: solution.answer,
+      origin: 'ai',
+      source: (solution.providerName || 'AI') + ' · đáp án tham khảo',
+      solution
+    };
+  }
+
+  function isSlideSynced(ctx, target) {
+    if (ctx.mode !== 'lightbox') return true;
+    const openLink = ctx.root.querySelector('a[aria-label="Mở trang ảnh"]')?.getAttribute('href');
+    if (openLink) {
+      try {
+        if (new URL(openLink, location.origin).pathname !== target.mediaPath) return false;
+      } catch {}
+    }
+    const toolbarMatch = ctx.root.querySelector('p[aria-live="polite"]')?.textContent.match(/(\d+)\s*\/\s*(\d+)/);
+    const sidebarMatch = ctx.sidebar?.textContent.match(/Ảnh\s+(\d+)\s*\/\s*(\d+)/i);
+    if (toolbarMatch && sidebarMatch && toolbarMatch[1] !== sidebarMatch[1]) {
+      return false;
+    }
+    return true;
+  }
+
+  async function waitForQuestionReady(ctx, target) {
+    const deadline = Date.now() + 5000;
+    while (currentQuestion(ctx)?.key === target.key && ctx.root.isConnected) {
+      if (isSlideSynced(ctx, target) && !isPollLoading(ctx.sidebar)) {
+        return ctx.sidebar;
       }
       if (Date.now() >= deadline) return null;
       await new Promise(resolve => setTimeout(resolve, 80));

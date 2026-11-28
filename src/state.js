@@ -5,11 +5,81 @@
   const attempts = new Map();
   const examMode = { active: false, startedAt: 0, endsAt: 0, timerId: null, answers: new Map(), summary: null };
   const reviewRound = { active: false, queue: [], remaining: new Set() };
-  const reviewKey = 'fuoReview:' + location.pathname;
-  const savedReview = GM_getValue(reviewKey, {});
-  const review = new Map(Object.entries(savedReview?.questions || {}));
-  let autoExported = Boolean(savedReview?.autoExported);
+  const reviewCache = new Map();
+  let activeExamInfo = null;
   let catalog = new Map();
+
+  function defaultExamInfo() {
+    const path = location.pathname.startsWith('/threads/') ? location.pathname : '/threads/unknown/';
+    return {
+      path,
+      name: document.title.replace(/\s*\|\s*FuOverflow.*$/i, '').trim() || 'FUOverflow',
+      threadUrl: location.origin + path
+    };
+  }
+
+  function getExamInfo(root) {
+    const scopeLinks = [
+      ...(root ? [...root.querySelectorAll('a[href*="/threads/"]')] : []),
+      ...document.querySelectorAll('nav[aria-label="Đường dẫn"] a[href*="/threads/"]'),
+      ...document.querySelectorAll('a[href*="/threads/"]')
+    ];
+    for (const link of scopeLinks) {
+      const href = link.getAttribute('href');
+      if (!href) continue;
+      let parsed;
+      try {
+        parsed = new URL(href, location.origin);
+      } catch {
+        continue;
+      }
+      if (!parsed.pathname.includes('/threads/')) continue;
+      const path = parsed.pathname.endsWith('/') ? parsed.pathname : parsed.pathname + '/';
+      const linkText = link.textContent.trim();
+      const breadcrumbText = document.querySelector('nav[aria-label="Đường dẫn"] a[href*="/threads/"]')?.textContent.trim();
+      const h1Text = document.querySelector('main h1')?.textContent.replace(/\s*[—–-]\s*ảnh\s+\d+\s*\/\s*\d+.*$/i, '').trim();
+      const name = (linkText && !/^bài viết gốc$/i.test(linkText) ? linkText : '')
+        || breadcrumbText
+        || h1Text
+        || document.title.replace(/\s*[—–-]\s*ảnh\s+\d+\s*\/\s*\d+.*$/i, '').replace(/\s*\|\s*FuOverflow.*$/i, '').trim()
+        || 'FUOverflow';
+      return {
+        path,
+        name,
+        threadUrl: location.origin + path
+      };
+    }
+    if (location.pathname.startsWith('/media/')) {
+      const h1Text = document.querySelector('main h1')?.textContent.replace(/\s*[—–-]\s*ảnh\s+\d+\s*\/\s*\d+.*$/i, '').trim();
+      const path = location.pathname;
+      return {
+        path,
+        name: h1Text || document.title.replace(/\s*\|\s*FuOverflow.*$/i, '').trim() || 'FUOverflow',
+        threadUrl: location.origin + path
+      };
+    }
+    return defaultExamInfo();
+  }
+
+  function getReviewStore(examInfo) {
+    const info = examInfo || activeExamInfo || defaultExamInfo();
+    if (!reviewCache.has(info.path)) {
+      const saved = GM_getValue('fuoReview:' + info.path, {});
+      reviewCache.set(info.path, {
+        questions: new Map(Object.entries(saved?.questions || {})),
+        autoExported: Boolean(saved?.autoExported)
+      });
+    }
+    return reviewCache.get(info.path);
+  }
+
+  function currentReview(examInfo) {
+    return getReviewStore(examInfo).questions;
+  }
+
+  function examName(examInfo) {
+    return (examInfo || activeExamInfo || getExamInfo(document)).name;
+  }
 
   const MAX_OCR_CACHE = 1000;
   function sanitizeOcrCache(raw) {
@@ -43,40 +113,14 @@
   }
   window.addEventListener('pagehide', flushOcrCache);
 
-  function saveReview() {
-    GM_setValue(reviewKey, { questions: Object.fromEntries(review), autoExported });
+  function saveReview(examInfo) {
+    const info = examInfo || activeExamInfo || defaultExamInfo();
+    const store = getReviewStore(info);
+    GM_setValue('fuoReview:' + info.path, {
+      questions: Object.fromEntries(store.questions),
+      autoExported: store.autoExported
+    });
     flushOcrCache();
-  }
-
-  function examName() {
-    return document.querySelector('h1.p-title-value')?.textContent.trim()
-      || document.querySelector('meta[property="og:title"]')?.content
-      || document.title.replace(/\s*\|\s*FuOverflow.*$/i, '').trim() || 'FUOverflow';
-  }
-
-  // Attachment filenames are stable; signed URLs and thumbnail URLs are not.
-  const questionImage = /^[^<>/\\]+\.(?:webp|jpe?g|png|gif|avif)$/i;
-
-  const titleCache = new WeakMap();
-  function attachmentTitle(link) {
-    const sig = (link.getAttribute('data-caption') || '') + '\u0000' + (link.getAttribute('title') || '') + '\u0000' + link.textContent;
-    const cached = titleCache.get(link);
-    if (cached && cached.sig === sig) return cached.title;
-    const title = computeAttachmentTitle(link);
-    titleCache.set(link, { sig, title });
-    return title;
-  }
-
-  function computeAttachmentTitle(link) {
-    const caption = document.createElement('template');
-    caption.innerHTML = link.getAttribute('data-caption') || '';
-    const values = [caption.content.querySelector('h4')?.textContent,
-      link.querySelector('img')?.alt, link.getAttribute('title'), link.textContent];
-    for (const value of values) {
-      const title = value?.trim();
-      if (questionImage.test(title || '')) return title;
-    }
-    return null;
   }
 
   function stableImageURL(value) {
@@ -84,87 +128,45 @@
     catch { return ''; }
   }
 
-  // Per-frame index of title -> distinct stable URLs, rebuilt at most once per animation frame.
-  let titleIndex = null;
-  let titleIndexLinks = null;
-  function pageLinks() {
-    if (!titleIndexLinks) {
-      titleIndexLinks = [...document.querySelectorAll('a[href]')].filter(a => !a.closest('.fancybox__container'));
-      requestAnimationFrame(() => { titleIndexLinks = null; titleIndex = null; });
-    }
-    return titleIndexLinks;
-  }
-  function questionKey(title, url) {
-    if (!titleIndex) {
-      titleIndex = new Map();
-      for (const a of pageLinks()) {
-        const t = attachmentTitle(a);
-        if (!t) continue;
-        if (!titleIndex.has(t)) titleIndex.set(t, new Set());
-        titleIndex.get(t).add(stableImageURL(a.href));
+  function discoverQuestions(ctx, target) {
+    const next = new Map(catalog);
+    const thumbButtons = [...(ctx?.root?.querySelectorAll('nav[aria-label="Ảnh thu nhỏ"] li button') || [])];
+    for (let i = 0; i < thumbButtons.length; i++) {
+      const idx = i + 1;
+      if (target?.index === idx) {
+        next.set(target.key, {
+          key: target.key,
+          title: target.title,
+          url: target.mediaUrl,
+          index: idx,
+          thumb: thumbButtons[i]
+        });
       }
     }
-    const urls = titleIndex.get(title);
-    // Preserve existing practice keys unless a filename is ambiguous.
-    return urls && urls.size > 1 ? title + ' | ' + stableImageURL(url) : title;
+    if (target?.key) {
+      next.set(target.key, {
+        key: target.key,
+        title: target.title,
+        url: target.mediaUrl,
+        index: target.index || next.size + 1,
+        thumb: target.index && thumbButtons[target.index - 1] ? thumbButtons[target.index - 1] : null
+      });
+    }
+    catalog = next;
   }
 
-  function discoverQuestions(target) {
-    const links = pageLinks();
-    const source = links.find(a => stableImageURL(a.href) === stableImageURL(target?.image?.src))
-      || links.find(a => attachmentTitle(a) === target?.title);
-    // Gallery attachments can live outside .bbWrapper.
-    const group = source?.getAttribute('data-fancybox');
-    const owner = source?.closest('.bbWrapper, .message');
-    const candidates = group ? links.filter(a => a.getAttribute('data-fancybox') === group)
-      : owner ? [...owner.querySelectorAll('a[href]')] : links;
-    const found = new Map();
-    for (const a of candidates) {
-      const title = attachmentTitle(a);
-      if (!title) continue;
-      // Arbitrary names follow gallery order; numbered question names keep numeric order.
-      const number = title.match(/^Q(\d+)/i)?.[1] || title.match(/\((\d+)\)\.[^.]+$/)?.[1];
-      const key = questionKey(title, a.href);
-      if (!found.has(key)) found.set(key, { key, title, url: a.href, link: a, number: number ? Number(number) : found.size + 1 });
-    }
-    catalog = found;
+  function sortReviewEntries(entries) {
+    return [...entries].sort((a, b) => {
+      const numA = a[1]?.index || Number(a[0].match(/\d+/)?.[0]) || 0;
+      const numB = b[1]?.index || Number(b[0].match(/\d+/)?.[0]) || 0;
+      return numA - numB || a[0].localeCompare(b[0]);
+    });
   }
 
   function csvCell(value) {
     let text = String(value ?? '');
     if (/^[\s]*[=+@-]/.test(text)) text = "'" + text;
     return '"' + text.replace(/"/g, '""') + '"';
-  }
-
-  function exportReview() {
-    const rows = [['Tên đề', 'Câu hỏi', 'Đã trả lời sai', 'Đánh dấu sao', 'Bạn chọn', 'Đáp án tham khảo', 'Nguồn đáp án', 'Ảnh câu hỏi', 'Link đề']];
-    for (const [title, item] of [...review].sort((a, b) => Number(a[0].match(/\d+/)?.[0]) - Number(b[0].match(/\d+/)?.[0]))) {
-      if (!item.wrong && !item.starred) continue;
-      rows.push([examName(), title, item.wrong ? 'Có' : 'Không', item.starred ? 'Có' : 'Không',
-        item.wrongSelected || item.selected || '', item.answer || '', item.source || '', item.url || '', location.href.split('#')[0]]);
-    }
-    const blob = new Blob(['\uFEFF' + rows.map(row => row.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = examName().replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(0, 140) + '_cau-can-on.csv';
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-    return rows.length - 1;
-  }
-
-  function maybeExport() {
-    if (autoExported || !catalog.size) return;
-    const last = [...catalog.values()].sort((a, b) => b.number - a.number)[0];
-    // Only successful grading completes a question; viewing AI alone does not.
-    const completed = attempts.get(last.key);
-    if (!completed?.answer || completed.busy) return;
-    exportReview();
-    autoExported = true;
-    saveReview();
-    completed.message += ' · Đã xuất CSV ôn tập.';
   }
 
   function triggerDownload(blob, filename) {
@@ -190,15 +192,54 @@
       .replace(/"/g, '&quot;');
   }
 
-  function exportAnkiTSV() {
-    const exam = examName();
+  function exportReview(examInfo) {
+    const info = examInfo || activeExamInfo || getExamInfo(document);
+    const store = getReviewStore(info);
+    const rows = [['Tên đề', 'Câu hỏi', 'Đã trả lời sai', 'Đánh dấu sao', 'Bạn chọn', 'Đáp án tham khảo', 'Nguồn đáp án', 'Ảnh câu hỏi', 'Link đề']];
+    for (const [key, item] of sortReviewEntries(store.questions)) {
+      if (!item.wrong && !item.starred) continue;
+      rows.push([
+        info.name,
+        item.title || key,
+        item.wrong ? 'Có' : 'Không',
+        item.starred ? 'Có' : 'Không',
+        item.wrongSelected || item.selected || '',
+        item.answer || '',
+        item.source || '',
+        item.url || '',
+        info.threadUrl
+      ]);
+    }
+    const blob = new Blob(['\uFEFF' + rows.map(row => row.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    triggerDownload(blob, safeFilename(info.name) + '_cau-can-on.csv');
+    return rows.length - 1;
+  }
+
+  function maybeExport(target, submission) {
+    const exam = target?.exam || activeExamInfo;
+    if (!exam) return;
+    const store = getReviewStore(exam);
+    if (store.autoExported) return;
+    const isFinal = Boolean(target?.index && target?.total && target.index >= target.total);
+    if (!isFinal) return;
+    if (!submission?.answer || submission.busy) return;
+    exportReview(exam);
+    store.autoExported = true;
+    saveReview(exam);
+    submission.message += ' · Đã xuất CSV ôn tập.';
+  }
+
+  function exportAnkiTSV(examInfo) {
+    const info = examInfo || activeExamInfo || getExamInfo(document);
+    const store = getReviewStore(info);
+    const exam = info.name;
     const examTag = exam.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd')
       .replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 48) || 'fuoverflow';
-    const threadUrl = location.href.split('#')[0];
+    const threadUrl = info.threadUrl;
     const lines = [];
-    for (const [key, item] of [...review].sort((a, b) => (Number(a[0].match(/\d+/)?.[0]) || 0) - (Number(b[0].match(/\d+/)?.[0]) || 0))) {
+    for (const [key, item] of sortReviewEntries(store.questions)) {
       if (!item.wrong && !item.starred) continue;
-      const title = key.split(' | ')[0];
+      const title = item.title || key.split(' | ')[0];
       const imgHref = item.url || '';
       const front = escapeHtml(exam + ' — ' + title)
         + (imgHref ? '<br><a href="' + escapeHtml(imgHref) + '">Xem ảnh câu hỏi</a>' : '');
@@ -217,24 +258,27 @@
     return lines.length;
   }
 
-  function buildBackupPayload() {
+  function buildBackupPayload(examInfo) {
+    const info = examInfo || activeExamInfo || getExamInfo(document);
+    const store = getReviewStore(info);
     return {
       app: 'fuo-reui',
       version: 1,
       exportedAt: new Date().toISOString(),
-      pathname: location.pathname,
-      examName: examName(),
-      review: { questions: Object.fromEntries(review), autoExported },
+      pathname: info.path,
+      examName: info.name,
+      review: { questions: Object.fromEntries(store.questions), autoExported: store.autoExported },
       ocrCache: { ...persistedOcrCache },
       aiConfig: loadAIConfig()
     };
   }
 
-  function exportBackupJSON() {
-    const payload = buildBackupPayload();
+  function exportBackupJSON(examInfo) {
+    const info = examInfo || activeExamInfo || getExamInfo(document);
+    const payload = buildBackupPayload(info);
     const date = new Date().toISOString().slice(0, 10);
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8;' });
-    triggerDownload(blob, safeFilename(examName()) + '_backup_' + date + '.json');
+    triggerDownload(blob, safeFilename(info.name) + '_backup_' + date + '.json');
     return Object.keys(payload.review.questions).length;
   }
 
@@ -245,6 +289,8 @@
       if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
       if (!key || !item || typeof item !== 'object' || Array.isArray(item)) continue;
       const entry = {};
+      if (typeof item.title === 'string') entry.title = item.title.slice(0, 120);
+      if (Number.isFinite(item.index) && item.index > 0) entry.index = Math.floor(item.index);
       if (typeof item.selected === 'string') entry.selected = item.selected.slice(0, 16);
       if (typeof item.answer === 'string') entry.answer = item.answer.slice(0, 16);
       if (typeof item.source === 'string') entry.source = item.source.slice(0, 120);
@@ -257,7 +303,7 @@
     return clean;
   }
 
-  function importBackupJSON(rawText) {
+  function importBackupJSON(rawText, examInfo) {
     let parsed;
     try {
       parsed = JSON.parse(rawText);
@@ -267,10 +313,12 @@
     if (!parsed || typeof parsed !== 'object' || parsed.app !== 'fuo-reui') {
       throw new Error('File JSON không đúng định dạng sao lưu của FUO reUI.');
     }
+    const info = examInfo || activeExamInfo || getExamInfo(document);
+    const store = getReviewStore(info);
     const restoredQuestions = sanitizeReviewQuestions(parsed.review?.questions);
-    review.clear();
-    for (const [k, v] of restoredQuestions) review.set(k, v);
-    autoExported = Boolean(parsed.review?.autoExported);
+    store.questions.clear();
+    for (const [k, v] of restoredQuestions) store.questions.set(k, v);
+    store.autoExported = Boolean(parsed.review?.autoExported);
     if (parsed.ocrCache && typeof parsed.ocrCache === 'object') {
       const cleanOcr = sanitizeOcrCache(parsed.ocrCache);
       for (const [k, v] of Object.entries(cleanOcr)) rememberOcrType(k, v);
@@ -278,7 +326,7 @@
     if (parsed.aiConfig && typeof parsed.aiConfig === 'object') {
       saveAIConfig(parsed.aiConfig);
     }
-    saveReview();
+    saveReview(info);
     notifyAIConfigChanged();
     return restoredQuestions.size;
   }
@@ -387,17 +435,20 @@
 
     dialog.append(header, note, row, alertBox, footer);
     backdrop.append(dialog);
-    document.body.append(backdrop);
+    let modalHost = document.body;
+    try { modalHost = document.querySelector('dialog:modal') || document.body; } catch {}
+    modalHost.append(backdrop);
     ankiBtn.focus();
     return backdrop;
   }
 
-  GM_registerMenuCommand('Xuất CSV câu sai / đánh dấu', exportReview);
-  GM_registerMenuCommand('Xuất thẻ Anki (.tsv)', exportAnkiTSV);
+  GM_registerMenuCommand('Xuất CSV câu sai / đánh dấu', () => exportReview(activeExamInfo || getExamInfo(document)));
+  GM_registerMenuCommand('Xuất thẻ Anki (.tsv)', () => exportAnkiTSV(activeExamInfo || getExamInfo(document)));
   GM_registerMenuCommand('Sao lưu / Khôi phục tiến độ (JSON)', () => openBackupModal());
   GM_registerMenuCommand('Bắt đầu lượt luyện đề mới', () => {
+    const info = activeExamInfo || getExamInfo(document);
     if (!confirm('Xóa kết quả và dấu sao của đề này để bắt đầu lượt mới?')) return;
-    GM_setValue(reviewKey, { questions: {}, autoExported: false });
+    GM_setValue('fuoReview:' + info.path, { questions: {}, autoExported: false });
+    reviewCache.delete(info.path);
     location.reload();
   });
-

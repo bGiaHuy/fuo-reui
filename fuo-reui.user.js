@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         FUOverflow — Luyện đề
 // @namespace    fuoverflow-quiz-local
-// @version      3.0.1
-// @description  Luyện đề trắc nghiệm ngay trong trình xem ảnh FUOverflow: chọn A-H, chấm theo bình luận hoặc AI (BYOK), thi thử bấm giờ, vòng ôn tập và xuất CSV/Anki/JSON.
+// @version      4.0.0
+// @description  Luyện đề trắc nghiệm ngay trong trình xem ảnh mới của FUOverflow: ẩn tỷ lệ bình chọn và FUO AI để tự làm, chấm cộng đồng / FUO AI / BYOK AI, thi thử bấm giờ, vòng ôn tập và xuất CSV/Anki/JSON.
 // @author       Gia Huy Bùi, Phùng Xuân Bách, thanh huy
 // @license      MIT
 // @homepageURL  https://github.com/bGiaHuy/fuo-reui
 // @supportURL   https://github.com/bGiaHuy/fuo-reui/issues
 // @updateURL    https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js
 // @downloadURL  https://raw.githubusercontent.com/bGiaHuy/fuo-reui/main/fuo-reui.user.js
-// @match        https://fuoverflow.com/threads/*
+// @match        https://fuoverflow.com/*
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -20,6 +20,7 @@
 // @require      https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/contrib/auto-render.min.js
 // @require      https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js
 // @resource     katexCSS https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/katex.min.css
+// @connect      cdn.fuoverflow.com
 // @connect      api.deepseek.com
 // @connect      api.openai.com
 // @connect      api.anthropic.com
@@ -38,11 +39,81 @@
   const attempts = new Map();
   const examMode = { active: false, startedAt: 0, endsAt: 0, timerId: null, answers: new Map(), summary: null };
   const reviewRound = { active: false, queue: [], remaining: new Set() };
-  const reviewKey = 'fuoReview:' + location.pathname;
-  const savedReview = GM_getValue(reviewKey, {});
-  const review = new Map(Object.entries(savedReview?.questions || {}));
-  let autoExported = Boolean(savedReview?.autoExported);
+  const reviewCache = new Map();
+  let activeExamInfo = null;
   let catalog = new Map();
+
+  function defaultExamInfo() {
+    const path = location.pathname.startsWith('/threads/') ? location.pathname : '/threads/unknown/';
+    return {
+      path,
+      name: document.title.replace(/\s*\|\s*FuOverflow.*$/i, '').trim() || 'FUOverflow',
+      threadUrl: location.origin + path
+    };
+  }
+
+  function getExamInfo(root) {
+    const scopeLinks = [
+      ...(root ? [...root.querySelectorAll('a[href*="/threads/"]')] : []),
+      ...document.querySelectorAll('nav[aria-label="Đường dẫn"] a[href*="/threads/"]'),
+      ...document.querySelectorAll('a[href*="/threads/"]')
+    ];
+    for (const link of scopeLinks) {
+      const href = link.getAttribute('href');
+      if (!href) continue;
+      let parsed;
+      try {
+        parsed = new URL(href, location.origin);
+      } catch {
+        continue;
+      }
+      if (!parsed.pathname.includes('/threads/')) continue;
+      const path = parsed.pathname.endsWith('/') ? parsed.pathname : parsed.pathname + '/';
+      const linkText = link.textContent.trim();
+      const breadcrumbText = document.querySelector('nav[aria-label="Đường dẫn"] a[href*="/threads/"]')?.textContent.trim();
+      const h1Text = document.querySelector('main h1')?.textContent.replace(/\s*[—–-]\s*ảnh\s+\d+\s*\/\s*\d+.*$/i, '').trim();
+      const name = (linkText && !/^bài viết gốc$/i.test(linkText) ? linkText : '')
+        || breadcrumbText
+        || h1Text
+        || document.title.replace(/\s*[—–-]\s*ảnh\s+\d+\s*\/\s*\d+.*$/i, '').replace(/\s*\|\s*FuOverflow.*$/i, '').trim()
+        || 'FUOverflow';
+      return {
+        path,
+        name,
+        threadUrl: location.origin + path
+      };
+    }
+    if (location.pathname.startsWith('/media/')) {
+      const h1Text = document.querySelector('main h1')?.textContent.replace(/\s*[—–-]\s*ảnh\s+\d+\s*\/\s*\d+.*$/i, '').trim();
+      const path = location.pathname;
+      return {
+        path,
+        name: h1Text || document.title.replace(/\s*\|\s*FuOverflow.*$/i, '').trim() || 'FUOverflow',
+        threadUrl: location.origin + path
+      };
+    }
+    return defaultExamInfo();
+  }
+
+  function getReviewStore(examInfo) {
+    const info = examInfo || activeExamInfo || defaultExamInfo();
+    if (!reviewCache.has(info.path)) {
+      const saved = GM_getValue('fuoReview:' + info.path, {});
+      reviewCache.set(info.path, {
+        questions: new Map(Object.entries(saved?.questions || {})),
+        autoExported: Boolean(saved?.autoExported)
+      });
+    }
+    return reviewCache.get(info.path);
+  }
+
+  function currentReview(examInfo) {
+    return getReviewStore(examInfo).questions;
+  }
+
+  function examName(examInfo) {
+    return (examInfo || activeExamInfo || getExamInfo(document)).name;
+  }
 
   const MAX_OCR_CACHE = 1000;
   function sanitizeOcrCache(raw) {
@@ -76,40 +147,14 @@
   }
   window.addEventListener('pagehide', flushOcrCache);
 
-  function saveReview() {
-    GM_setValue(reviewKey, { questions: Object.fromEntries(review), autoExported });
+  function saveReview(examInfo) {
+    const info = examInfo || activeExamInfo || defaultExamInfo();
+    const store = getReviewStore(info);
+    GM_setValue('fuoReview:' + info.path, {
+      questions: Object.fromEntries(store.questions),
+      autoExported: store.autoExported
+    });
     flushOcrCache();
-  }
-
-  function examName() {
-    return document.querySelector('h1.p-title-value')?.textContent.trim()
-      || document.querySelector('meta[property="og:title"]')?.content
-      || document.title.replace(/\s*\|\s*FuOverflow.*$/i, '').trim() || 'FUOverflow';
-  }
-
-  // Attachment filenames are stable; signed URLs and thumbnail URLs are not.
-  const questionImage = /^[^<>/\\]+\.(?:webp|jpe?g|png|gif|avif)$/i;
-
-  const titleCache = new WeakMap();
-  function attachmentTitle(link) {
-    const sig = (link.getAttribute('data-caption') || '') + '\u0000' + (link.getAttribute('title') || '') + '\u0000' + link.textContent;
-    const cached = titleCache.get(link);
-    if (cached && cached.sig === sig) return cached.title;
-    const title = computeAttachmentTitle(link);
-    titleCache.set(link, { sig, title });
-    return title;
-  }
-
-  function computeAttachmentTitle(link) {
-    const caption = document.createElement('template');
-    caption.innerHTML = link.getAttribute('data-caption') || '';
-    const values = [caption.content.querySelector('h4')?.textContent,
-      link.querySelector('img')?.alt, link.getAttribute('title'), link.textContent];
-    for (const value of values) {
-      const title = value?.trim();
-      if (questionImage.test(title || '')) return title;
-    }
-    return null;
   }
 
   function stableImageURL(value) {
@@ -117,87 +162,45 @@
     catch { return ''; }
   }
 
-  // Per-frame index of title -> distinct stable URLs, rebuilt at most once per animation frame.
-  let titleIndex = null;
-  let titleIndexLinks = null;
-  function pageLinks() {
-    if (!titleIndexLinks) {
-      titleIndexLinks = [...document.querySelectorAll('a[href]')].filter(a => !a.closest('.fancybox__container'));
-      requestAnimationFrame(() => { titleIndexLinks = null; titleIndex = null; });
-    }
-    return titleIndexLinks;
-  }
-  function questionKey(title, url) {
-    if (!titleIndex) {
-      titleIndex = new Map();
-      for (const a of pageLinks()) {
-        const t = attachmentTitle(a);
-        if (!t) continue;
-        if (!titleIndex.has(t)) titleIndex.set(t, new Set());
-        titleIndex.get(t).add(stableImageURL(a.href));
+  function discoverQuestions(ctx, target) {
+    const next = new Map(catalog);
+    const thumbButtons = [...(ctx?.root?.querySelectorAll('nav[aria-label="Ảnh thu nhỏ"] li button') || [])];
+    for (let i = 0; i < thumbButtons.length; i++) {
+      const idx = i + 1;
+      if (target?.index === idx) {
+        next.set(target.key, {
+          key: target.key,
+          title: target.title,
+          url: target.mediaUrl,
+          index: idx,
+          thumb: thumbButtons[i]
+        });
       }
     }
-    const urls = titleIndex.get(title);
-    // Preserve existing practice keys unless a filename is ambiguous.
-    return urls && urls.size > 1 ? title + ' | ' + stableImageURL(url) : title;
+    if (target?.key) {
+      next.set(target.key, {
+        key: target.key,
+        title: target.title,
+        url: target.mediaUrl,
+        index: target.index || next.size + 1,
+        thumb: target.index && thumbButtons[target.index - 1] ? thumbButtons[target.index - 1] : null
+      });
+    }
+    catalog = next;
   }
 
-  function discoverQuestions(target) {
-    const links = pageLinks();
-    const source = links.find(a => stableImageURL(a.href) === stableImageURL(target?.image?.src))
-      || links.find(a => attachmentTitle(a) === target?.title);
-    // Gallery attachments can live outside .bbWrapper.
-    const group = source?.getAttribute('data-fancybox');
-    const owner = source?.closest('.bbWrapper, .message');
-    const candidates = group ? links.filter(a => a.getAttribute('data-fancybox') === group)
-      : owner ? [...owner.querySelectorAll('a[href]')] : links;
-    const found = new Map();
-    for (const a of candidates) {
-      const title = attachmentTitle(a);
-      if (!title) continue;
-      // Arbitrary names follow gallery order; numbered question names keep numeric order.
-      const number = title.match(/^Q(\d+)/i)?.[1] || title.match(/\((\d+)\)\.[^.]+$/)?.[1];
-      const key = questionKey(title, a.href);
-      if (!found.has(key)) found.set(key, { key, title, url: a.href, link: a, number: number ? Number(number) : found.size + 1 });
-    }
-    catalog = found;
+  function sortReviewEntries(entries) {
+    return [...entries].sort((a, b) => {
+      const numA = a[1]?.index || Number(a[0].match(/\d+/)?.[0]) || 0;
+      const numB = b[1]?.index || Number(b[0].match(/\d+/)?.[0]) || 0;
+      return numA - numB || a[0].localeCompare(b[0]);
+    });
   }
 
   function csvCell(value) {
     let text = String(value ?? '');
     if (/^[\s]*[=+@-]/.test(text)) text = "'" + text;
     return '"' + text.replace(/"/g, '""') + '"';
-  }
-
-  function exportReview() {
-    const rows = [['Tên đề', 'Câu hỏi', 'Đã trả lời sai', 'Đánh dấu sao', 'Bạn chọn', 'Đáp án tham khảo', 'Nguồn đáp án', 'Ảnh câu hỏi', 'Link đề']];
-    for (const [title, item] of [...review].sort((a, b) => Number(a[0].match(/\d+/)?.[0]) - Number(b[0].match(/\d+/)?.[0]))) {
-      if (!item.wrong && !item.starred) continue;
-      rows.push([examName(), title, item.wrong ? 'Có' : 'Không', item.starred ? 'Có' : 'Không',
-        item.wrongSelected || item.selected || '', item.answer || '', item.source || '', item.url || '', location.href.split('#')[0]]);
-    }
-    const blob = new Blob(['\uFEFF' + rows.map(row => row.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = examName().replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(0, 140) + '_cau-can-on.csv';
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-    return rows.length - 1;
-  }
-
-  function maybeExport() {
-    if (autoExported || !catalog.size) return;
-    const last = [...catalog.values()].sort((a, b) => b.number - a.number)[0];
-    // Only successful grading completes a question; viewing AI alone does not.
-    const completed = attempts.get(last.key);
-    if (!completed?.answer || completed.busy) return;
-    exportReview();
-    autoExported = true;
-    saveReview();
-    completed.message += ' · Đã xuất CSV ôn tập.';
   }
 
   function triggerDownload(blob, filename) {
@@ -223,15 +226,54 @@
       .replace(/"/g, '&quot;');
   }
 
-  function exportAnkiTSV() {
-    const exam = examName();
+  function exportReview(examInfo) {
+    const info = examInfo || activeExamInfo || getExamInfo(document);
+    const store = getReviewStore(info);
+    const rows = [['Tên đề', 'Câu hỏi', 'Đã trả lời sai', 'Đánh dấu sao', 'Bạn chọn', 'Đáp án tham khảo', 'Nguồn đáp án', 'Ảnh câu hỏi', 'Link đề']];
+    for (const [key, item] of sortReviewEntries(store.questions)) {
+      if (!item.wrong && !item.starred) continue;
+      rows.push([
+        info.name,
+        item.title || key,
+        item.wrong ? 'Có' : 'Không',
+        item.starred ? 'Có' : 'Không',
+        item.wrongSelected || item.selected || '',
+        item.answer || '',
+        item.source || '',
+        item.url || '',
+        info.threadUrl
+      ]);
+    }
+    const blob = new Blob(['\uFEFF' + rows.map(row => row.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    triggerDownload(blob, safeFilename(info.name) + '_cau-can-on.csv');
+    return rows.length - 1;
+  }
+
+  function maybeExport(target, submission) {
+    const exam = target?.exam || activeExamInfo;
+    if (!exam) return;
+    const store = getReviewStore(exam);
+    if (store.autoExported) return;
+    const isFinal = Boolean(target?.index && target?.total && target.index >= target.total);
+    if (!isFinal) return;
+    if (!submission?.answer || submission.busy) return;
+    exportReview(exam);
+    store.autoExported = true;
+    saveReview(exam);
+    submission.message += ' · Đã xuất CSV ôn tập.';
+  }
+
+  function exportAnkiTSV(examInfo) {
+    const info = examInfo || activeExamInfo || getExamInfo(document);
+    const store = getReviewStore(info);
+    const exam = info.name;
     const examTag = exam.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd')
       .replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 48) || 'fuoverflow';
-    const threadUrl = location.href.split('#')[0];
+    const threadUrl = info.threadUrl;
     const lines = [];
-    for (const [key, item] of [...review].sort((a, b) => (Number(a[0].match(/\d+/)?.[0]) || 0) - (Number(b[0].match(/\d+/)?.[0]) || 0))) {
+    for (const [key, item] of sortReviewEntries(store.questions)) {
       if (!item.wrong && !item.starred) continue;
-      const title = key.split(' | ')[0];
+      const title = item.title || key.split(' | ')[0];
       const imgHref = item.url || '';
       const front = escapeHtml(exam + ' — ' + title)
         + (imgHref ? '<br><a href="' + escapeHtml(imgHref) + '">Xem ảnh câu hỏi</a>' : '');
@@ -250,24 +292,27 @@
     return lines.length;
   }
 
-  function buildBackupPayload() {
+  function buildBackupPayload(examInfo) {
+    const info = examInfo || activeExamInfo || getExamInfo(document);
+    const store = getReviewStore(info);
     return {
       app: 'fuo-reui',
       version: 1,
       exportedAt: new Date().toISOString(),
-      pathname: location.pathname,
-      examName: examName(),
-      review: { questions: Object.fromEntries(review), autoExported },
+      pathname: info.path,
+      examName: info.name,
+      review: { questions: Object.fromEntries(store.questions), autoExported: store.autoExported },
       ocrCache: { ...persistedOcrCache },
       aiConfig: loadAIConfig()
     };
   }
 
-  function exportBackupJSON() {
-    const payload = buildBackupPayload();
+  function exportBackupJSON(examInfo) {
+    const info = examInfo || activeExamInfo || getExamInfo(document);
+    const payload = buildBackupPayload(info);
     const date = new Date().toISOString().slice(0, 10);
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8;' });
-    triggerDownload(blob, safeFilename(examName()) + '_backup_' + date + '.json');
+    triggerDownload(blob, safeFilename(info.name) + '_backup_' + date + '.json');
     return Object.keys(payload.review.questions).length;
   }
 
@@ -278,6 +323,8 @@
       if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
       if (!key || !item || typeof item !== 'object' || Array.isArray(item)) continue;
       const entry = {};
+      if (typeof item.title === 'string') entry.title = item.title.slice(0, 120);
+      if (Number.isFinite(item.index) && item.index > 0) entry.index = Math.floor(item.index);
       if (typeof item.selected === 'string') entry.selected = item.selected.slice(0, 16);
       if (typeof item.answer === 'string') entry.answer = item.answer.slice(0, 16);
       if (typeof item.source === 'string') entry.source = item.source.slice(0, 120);
@@ -290,7 +337,7 @@
     return clean;
   }
 
-  function importBackupJSON(rawText) {
+  function importBackupJSON(rawText, examInfo) {
     let parsed;
     try {
       parsed = JSON.parse(rawText);
@@ -300,10 +347,12 @@
     if (!parsed || typeof parsed !== 'object' || parsed.app !== 'fuo-reui') {
       throw new Error('File JSON không đúng định dạng sao lưu của FUO reUI.');
     }
+    const info = examInfo || activeExamInfo || getExamInfo(document);
+    const store = getReviewStore(info);
     const restoredQuestions = sanitizeReviewQuestions(parsed.review?.questions);
-    review.clear();
-    for (const [k, v] of restoredQuestions) review.set(k, v);
-    autoExported = Boolean(parsed.review?.autoExported);
+    store.questions.clear();
+    for (const [k, v] of restoredQuestions) store.questions.set(k, v);
+    store.autoExported = Boolean(parsed.review?.autoExported);
     if (parsed.ocrCache && typeof parsed.ocrCache === 'object') {
       const cleanOcr = sanitizeOcrCache(parsed.ocrCache);
       for (const [k, v] of Object.entries(cleanOcr)) rememberOcrType(k, v);
@@ -311,7 +360,7 @@
     if (parsed.aiConfig && typeof parsed.aiConfig === 'object') {
       saveAIConfig(parsed.aiConfig);
     }
-    saveReview();
+    saveReview(info);
     notifyAIConfigChanged();
     return restoredQuestions.size;
   }
@@ -420,59 +469,101 @@
 
     dialog.append(header, note, row, alertBox, footer);
     backdrop.append(dialog);
-    document.body.append(backdrop);
+    let modalHost = document.body;
+    try { modalHost = document.querySelector('dialog:modal') || document.body; } catch {}
+    modalHost.append(backdrop);
     ankiBtn.focus();
     return backdrop;
   }
 
-  GM_registerMenuCommand('Xuất CSV câu sai / đánh dấu', exportReview);
-  GM_registerMenuCommand('Xuất thẻ Anki (.tsv)', exportAnkiTSV);
+  GM_registerMenuCommand('Xuất CSV câu sai / đánh dấu', () => exportReview(activeExamInfo || getExamInfo(document)));
+  GM_registerMenuCommand('Xuất thẻ Anki (.tsv)', () => exportAnkiTSV(activeExamInfo || getExamInfo(document)));
   GM_registerMenuCommand('Sao lưu / Khôi phục tiến độ (JSON)', () => openBackupModal());
   GM_registerMenuCommand('Bắt đầu lượt luyện đề mới', () => {
+    const info = activeExamInfo || getExamInfo(document);
     if (!confirm('Xóa kết quả và dấu sao của đề này để bắt đầu lượt mới?')) return;
-    GM_setValue(reviewKey, { questions: {}, autoExported: false });
+    GM_setValue('fuoReview:' + info.path, { questions: {}, autoExported: false });
+    reviewCache.delete(info.path);
     location.reload();
   });
 
-  GM_addStyle(
-    '.fancybox__container:has(.fuo-quiz:not([hidden])) .fancybox-sidebar-content:not(.fuo-comments-visible) .js-messageResponses{display:none!important}' +
-    '.fancybox-show-sidebar .fancybox-sidebar:has(> .fuo-quiz:not([hidden])){display:flex;flex-direction:column}' +
-    '.fancybox-sidebar:has(> .fuo-quiz:not([hidden])) > .fancybox-sidebar-content{flex:1;min-height:0;overflow:auto}' +
-    '.fuo-quiz{position:relative;z-index:2;flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px;background:#172030;color:#f1f5f9;font:600 14px/1.4 system-ui}' +
-    '.fuo-quiz strong{flex-basis:100%}.fuo-quiz .fuo-options{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;flex-basis:100%}' +
-    '.fuo-quiz[hidden]{display:none}.fuo-quiz button{font:inherit;color:inherit;background:#29364a;border:1px solid #68768c;border-radius:7px;min-height:36px;min-width:36px;padding:4px 9px;cursor:pointer}' +
-    '.fuo-quiz button:focus-visible{outline:2px solid white;outline-offset:2px}' +
-    '.fuo-quiz button[aria-pressed=true]{background:#15467e;border-color:#93c5fd}' +
-    '.fuo-quiz button[data-mark=right]{background:#12452f;border-color:#86efac;color:#bbf7d0}' +
-    '.fuo-quiz button[data-mark=wrong]{background:#68252c;border-color:#fca5a5;color:#fee2e2}' +
-    '.fuo-quiz .fuo-ai-result{flex-basis:100%;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;font-weight:400;background:#202d41;padding:10px;border-radius:7px}.fuo-quiz .fuo-ai-result[hidden]{display:none}.fuo-quiz button:disabled{opacity:.6;cursor:default}' +
-    '.fuo-quiz .fuo-ai-result[role=status]{text-align:left;line-height:1.65}.fuo-ai-result .katex{white-space:normal;font-size:1.05em}.fuo-ai-result .katex-display{max-width:100%;overflow-x:auto;overflow-y:hidden;padding:4px 0}.fuo-ai-result .katex-display>.katex{white-space:nowrap}' +
-    '.fuo-quiz [role=status]{flex-basis:100%;text-align:center;color:#dbe6f5;min-height:1.4em}'
-  );
-
-  // The quiz must scroll with the sidebar, including long AI answers.
+  // Zero-flash spoiler shield + companion panel styles (injected at document-start).
   GM_addStyle(`
-    .fancybox-sidebar:has(> .fuo-quiz:not([hidden])){max-height:100dvh;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
-    .fancybox-sidebar:has(> .fuo-quiz:not([hidden])) > .fancybox-sidebar-content{flex:0 0 auto;overflow:visible}
-    .fuo-quiz{box-sizing:border-box;min-width:0;padding:18px;gap:10px;background:#18181b;color:#fafafa;font-weight:500;line-height:1.5;border-top:1px solid #3f3f46}
-    .fuo-quiz strong{font-size:15px;letter-spacing:-.02em}
-    .fuo-quiz button{min-height:40px;border-color:#3f3f46;background:#27272a;border-radius:8px;transition:background-color .16s,border-color .16s,box-shadow .16s}
+    section[aria-label="Bình chọn đáp án"]:not(.fuo-revealed) > header p { display: none !important; }
+    section[aria-label="Bình chọn đáp án"]:not(.fuo-revealed) [role="group"][aria-label="Các phương án"] button[aria-pressed] > span:first-child {
+      opacity: 0 !important;
+      transform: scaleX(0) !important;
+      transition: none !important;
+    }
+    section[aria-label="Bình chọn đáp án"]:not(.fuo-revealed) [role="group"][aria-label="Các phương án"] button[aria-pressed] > span:last-child {
+      visibility: hidden !important;
+      opacity: 0 !important;
+    }
+    section[aria-label="Bình chọn đáp án"].fuo-retrying:not(.fuo-revealed) [role="group"][aria-label="Các phương án"] button[aria-pressed="true"]:not([data-fuo-selected="true"]) {
+      border-color: var(--line-strong, #3f3f46) !important;
+      background: transparent !important;
+      box-shadow: none !important;
+    }
+    section[aria-label="Bình chọn đáp án"] [role="group"][aria-label="Các phương án"] button[data-fuo-selected="true"] {
+      border-color: #67e8f9 !important;
+      background: rgba(22, 78, 99, 0.35) !important;
+    }
+    section[aria-label="Bình chọn đáp án"] [role="group"][aria-label="Các phương án"] button[data-fuo-mark="right"] {
+      border-color: #4ade80 !important;
+      background: rgba(18, 69, 47, 0.45) !important;
+    }
+    section[aria-label="Bình chọn đáp án"] [role="group"][aria-label="Các phương án"] button[data-fuo-mark="right"]::after {
+      content: '✓';
+      margin-left: 6px;
+      color: #bbf7d0;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    section[aria-label="Bình chọn đáp án"] [role="group"][aria-label="Các phương án"] button[data-fuo-mark="wrong"] {
+      border-color: #f87171 !important;
+      background: rgba(104, 37, 44, 0.45) !important;
+    }
+    section[aria-label="Bình chọn đáp án"] [role="group"][aria-label="Các phương án"] button[data-fuo-mark="wrong"]::after {
+      content: '✗';
+      margin-left: 6px;
+      color: #fee2e2;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    section[aria-label="Bình luận về ảnh"]:not(.fuo-comments-visible) > :not(:has(h2)):not(:has([role="textbox"])):not(:has(iframe)):not(.fuo-quiz):not(.fuo-spoiler-notice),
+    aside[aria-label="Thảo luận về ảnh"] div:has(> div > h2):has(ul[aria-label="Bình luận"], [role="textbox"]):not(.fuo-comments-visible) > :not(:has(h2)):not(:has([role="textbox"])):not(:has(iframe)):not(.fuo-quiz):not(.fuo-spoiler-notice),
+    section[aria-label="Bình luận về ảnh"]:not(.fuo-comments-visible) ul[aria-label="Bình luận"],
+    aside[aria-label="Thảo luận về ảnh"] div:has(> div > h2):has(ul[aria-label="Bình luận"], [role="textbox"]):not(.fuo-comments-visible) ul[aria-label="Bình luận"] {
+      display: none !important;
+    }
+    .fuo-quiz{box-sizing:border-box;position:relative;z-index:2;flex:none;width:100%;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 14px;margin:0 0 12px;background:#18181b;color:#fafafa;border:1px solid #3f3f46;border-radius:10px;font:500 13px/1.45 system-ui,-apple-system,sans-serif}
+    aside[aria-label="Thảo luận về ảnh"] > .fuo-quiz{border-radius:0;border-left:0;border-right:0;border-top:0;margin:0;padding:12px 16px}
+    .fuo-quiz[hidden]{display:none}
+    .fuo-quiz strong{flex-basis:100%;font-size:14px;font-weight:650;letter-spacing:-.01em;color:#fafafa}
+    .fuo-quiz button{font:inherit;font-weight:600;color:#fafafa;background:#27272a;border:1px solid #3f3f46;border-radius:8px;min-height:34px;padding:5px 10px;cursor:pointer;transition:background-color .16s,border-color .16s,box-shadow .16s}
     .fuo-quiz button:enabled:hover{background:#3f3f46;border-color:#71717a}
-    .fuo-quiz button:focus-visible{outline:2px solid #a1a1aa;outline-offset:3px;box-shadow:0 0 0 4px #18181b}
+    .fuo-quiz button:focus-visible{outline:2px solid #a1a1aa;outline-offset:2px;box-shadow:0 0 0 4px #18181b}
     .fuo-quiz button[aria-pressed=true]{background:#164e63;border-color:#67e8f9}
-    .fuo-quiz button[data-mark=right]{background:#12452f;border-color:#86efac;color:#bbf7d0}
-    .fuo-quiz button[data-mark=wrong]{background:#68252c;border-color:#fca5a5;color:#fee2e2}
+    .fuo-quiz button:disabled{opacity:.55;cursor:default}
+    .fuo-quiz button[hidden]{display:none}
+    .fuo-quiz .fuo-submit-btn{background:#155e75;border-color:#22d3ee;color:#ecfeff}
+    .fuo-quiz .fuo-submit-btn:enabled:hover{background:#0e7490;border-color:#67e8f9}
     .fuo-quiz .fuo-ai-trigger{background:#fafafa;color:#18181b;border-color:#fafafa}
     .fuo-quiz .fuo-ai-trigger:enabled:hover{background:#e4e4e7;color:#18181b}
-    .fuo-quiz .fuo-ai-result{box-sizing:border-box;width:100%;padding:18px;background:#202023;border:1px solid #3f3f46;border-radius:12px;white-space:normal;animation:fuo-reveal .2s ease-out}
-    .fuo-quiz .fuo-ai-result[role=status]{font-size:15px;line-height:1.8;color:#e4e4e7}
-    .fuo-ai-heading{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding-bottom:14px;margin-bottom:16px;border-bottom:1px solid #3f3f46;font-size:12px;line-height:1.5;color:#a1a1aa}
+    .fuo-quiz [role=status]{flex-basis:100%;text-align:left;color:#dbe6f5;min-height:1.3em;font-size:13px;overflow-wrap:anywhere}
+    .fuo-quiz .fuo-multi-hint{flex-basis:100%;font-size:12px;color:#fde68a;background:#202023;border-left:2px solid #fbbf24;padding:6px 10px;border-radius:4px}
+    .fuo-quiz .fuo-multi-hint[hidden]{display:none}
+    .fuo-quiz .fuo-ai-result{box-sizing:border-box;flex-basis:100%;width:100%;min-width:0;padding:14px;background:#202023;border:1px solid #3f3f46;border-radius:10px;white-space:normal;overflow-wrap:anywhere;font-weight:400;animation:fuo-reveal .2s ease-out}
+    .fuo-quiz .fuo-ai-result[hidden]{display:none}
+    .fuo-quiz .fuo-ai-result[role=status]{font-size:14px;line-height:1.7;color:#e4e4e7}
+    .fuo-ai-result .katex{white-space:normal;font-size:1.05em}.fuo-ai-result .katex-display{max-width:100%;overflow-x:auto;overflow-y:hidden;padding:4px 0}.fuo-ai-result .katex-display>.katex{white-space:nowrap}
+    .fuo-ai-heading{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding-bottom:10px;margin-bottom:12px;border-bottom:1px solid #3f3f46;font-size:12px;line-height:1.5;color:#a1a1aa}
     .fuo-ai-provider{font-weight:650;color:#fafafa;font-size:14px}
     .fuo-ai-meta{font-size:11px;color:#a1a1aa;margin-left:auto;max-width:100%;overflow-wrap:anywhere}
-    .fuo-ai-answer{display:block;width:fit-content;margin:0 0 18px;padding:6px 12px;border:1px solid #155e75;border-radius:6px;background:#083344;color:#a5f3fc;font-weight:650}
-    .fuo-ai-result p{margin:0 0 16px;white-space:pre-wrap;overflow-wrap:anywhere}
+    .fuo-ai-answer{display:block;width:fit-content;margin:0 0 12px;padding:5px 10px;border:1px solid #155e75;border-radius:6px;background:#083344;color:#a5f3fc;font-weight:650}
+    .fuo-ai-result p{margin:0 0 12px;white-space:pre-wrap;overflow-wrap:anywhere}
     .fuo-ai-result p:last-child{margin-bottom:0}
-    .fuo-ai-note{border-left:2px solid #fbbf24;padding-left:12px;color:#fde68a}
+    .fuo-ai-note{border-left:2px solid #fbbf24;padding-left:10px;color:#fde68a}
     .fuo-ai-result:focus-visible{outline:2px solid #a1a1aa;outline-offset:2px}
     .fuo-settings-backdrop{position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:12px;box-sizing:border-box}
     .fuo-settings-dialog{background:#18181b;color:#fafafa;border:1px solid #3f3f46;border-radius:12px;width:min(520px,100%);max-height:calc(100dvh - 24px);overflow-y:auto;overscroll-behavior:contain;box-sizing:border-box;padding:16px;font:500 14px/1.45 system-ui,sans-serif;display:flex;flex-direction:column;gap:10px;animation:fuo-reveal .2s ease-out}
@@ -527,8 +618,7 @@
     .fuo-exam-summary{flex-basis:100%;display:flex;flex-direction:column;gap:8px;padding:12px;background:#202023;border:1px solid #3f3f46;border-radius:10px;font-size:13px;color:#e4e4e7}
     .fuo-exam-wrong-list{display:flex;flex-wrap:wrap;gap:6px}
     .fuo-backup-note{font-size:13px;line-height:1.5;color:#d4d4d8;padding:8px 10px;background:#202023;border:1px solid #3f3f46;border-radius:8px}
-    @media(min-width:768px){.fancybox-show-sidebar .fancybox-sidebar:has(> .fuo-quiz:not([hidden])){width:420px;max-width:45vw}}
-    @media(max-width:480px){.fuo-quiz{padding:12px}.fuo-quiz .fuo-ai-result{padding:14px}.fuo-settings-dialog{padding:14px;gap:10px}.fuo-settings-row>input,.fuo-settings-row>select{flex-basis:100%}.fuo-settings-row>button{flex:1 1 auto}.fuo-settings-footer{justify-content:stretch}.fuo-settings-footer>button{flex:1 1 0}}
+    @media(max-width:480px){.fuo-quiz{padding:10px 12px}.fuo-quiz .fuo-ai-result{padding:12px}.fuo-settings-dialog{padding:14px;gap:10px}.fuo-settings-row>input,.fuo-settings-row>select{flex-basis:100%}.fuo-settings-row>button{flex:1 1 auto}.fuo-settings-footer{justify-content:stretch}.fuo-settings-footer>button{flex:1 1 0}}
     @keyframes fuo-reveal{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
     @media(prefers-reduced-motion:reduce){.fuo-quiz button,.fuo-settings-dialog button{transition:none}.fuo-quiz .fuo-ai-result,.fuo-settings-dialog{animation:none}}
   `);
@@ -1555,7 +1645,9 @@
     backdrop.append(dialog);
     rebuildProviderSelect();
     populateFormFromSelected();
-    document.body.append(backdrop);
+    let modalHost = document.body;
+    try { modalHost = document.querySelector('dialog:modal') || document.body; } catch {}
+    modalHost.append(backdrop);
     providerSelect.focus();
     return backdrop;
   }
@@ -1597,7 +1689,7 @@
 
   function commentText(body) {
     const copy = body.cloneNode(true);
-    copy.querySelectorAll('.bbCodeBlock--quote').forEach(node => node.remove());
+    copy.querySelectorAll('blockquote, .bbCodeBlock--quote').forEach(node => node.remove());
     copy.querySelectorAll('br').forEach(node => node.replaceWith('\n'));
     copy.querySelectorAll('p, div, li').forEach(node => node.append('\n'));
     return copy.textContent;
@@ -1771,7 +1863,8 @@
         worker = await ocrTimeout(startup, () => {
           startup.then(w => w.terminate()).catch(() => {});
         });
-        const { data } = await ocrTimeout(worker.recognize(url));
+        const payload = await prepareImagePayload(image);
+        const { data } = await ocrTimeout(worker.recognize(payload.dataUrl));
         const detected = multipleInstruction(data.text || '') ? 'multiple' : 'single';
         rememberOcrType(cacheKey, detected);
         return detected;
@@ -1787,33 +1880,53 @@
     return task;
   }
 
-  function currentQuestion(root) {
-    const slide = root.querySelector('.fancybox__slide.is-selected');
-    const image = slide?.querySelector('img.fancybox-image');
-    if (!image) return null;
-    const imgStable = stableImageURL(image.src);
-    const source = pageLinks().find(a => stableImageURL(a.href) === imgStable);
-    // Compact Fancybox moves the caption outside the selected slide.
-    const title = slide.querySelector('.fancybox__caption h4')?.textContent.trim()
-      || (source && attachmentTitle(source))
-      || root.querySelector('.fancybox__caption h4')?.textContent.trim();
-    if (!questionImage.test(title ?? '')) return null;
-    return { title, image, key: questionKey(title, image.src), mediaURL: source?.getAttribute('data-lb-sidebar-href') };
+  function isAllowedImageUrl(url) {
+    if (url.protocol === 'blob:') return true;
+    if (url.origin !== 'null' && url.origin === location.origin) return true;
+    return url.protocol === 'https:' && (url.hostname === 'cdn.fuoverflow.com' || url.hostname === 'fuoverflow.com');
   }
 
-  function readVotes(sidebar) {
-    const authors = new Set();
-    const votes = [];
-    for (const comment of sidebar?.querySelectorAll('.js-comment') ?? []) {
-      const author = comment.getAttribute('data-author');
-      const body = comment.querySelector('.comment-body .bbWrapper');
-      if (!body || (author && authors.has(author))) continue;
-      const vote = commentVote(commentText(body));
-      if (!vote) continue;
-      if (author) authors.add(author);
-      votes.push(vote);
+  function gmFetchImageBlob(url) {
+    return new Promise((resolve, reject) => {
+      try {
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: url.href,
+          responseType: 'blob',
+          anonymous: true,
+          timeout: 15000,
+          onload(result) {
+            if (result?.status === 200 && result.response instanceof Blob) {
+              resolve(result.response);
+            } else {
+              reject(new Error('Không tải được ảnh câu hỏi.'));
+            }
+          },
+          onerror() {
+            reject(new Error('Không tải được ảnh câu hỏi.'));
+          },
+          ontimeout() {
+            reject(new Error('Không tải được ảnh câu hỏi.'));
+          }
+        });
+      } catch {
+        reject(new Error('Không tải được ảnh câu hỏi.'));
+      }
+    });
+  }
+
+  async function fetchImageBlob(url) {
+    const isSameOriginOrBlob = url.protocol === 'blob:' || url.origin === location.origin;
+    if (isSameOriginOrBlob) {
+      const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      if (!response.ok) throw new Error('Không tải được ảnh câu hỏi.');
+      return response.blob();
     }
-    return votes;
+    try {
+      const response = await fetch(url, { mode: 'cors', signal: AbortSignal.timeout(15000) });
+      if (response.ok) return response.blob();
+    } catch {}
+    return gmFetchImageBlob(url);
   }
 
   async function prepareImagePayload(image) {
@@ -1824,12 +1937,10 @@
     } catch {
       throw new Error('Không đọc được ảnh câu hỏi từ thread.');
     }
-    if (url.origin === 'null' || url.origin !== location.origin) {
+    if (!isAllowedImageUrl(url)) {
       throw new Error('Không đọc được ảnh câu hỏi từ thread.');
     }
-    const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-    if (!response.ok) throw new Error('Không tải được ảnh câu hỏi.');
-    const blob = await response.blob();
+    const blob = await fetchImageBlob(url);
     if (!/^image\/(webp|jpeg|png|gif)$/i.test(blob.type || '')) {
       throw new Error('Ảnh có định dạng không được hỗ trợ.');
     }
@@ -2131,17 +2242,373 @@
     }
   }
 
-  async function waitForComments(root, target) {
-    const deadline = Date.now() + 3000;
-    while (currentQuestion(root)?.key === target.key && root.isConnected) {
-      const content = root.querySelector('.fancybox-sidebar-content');
-      const mediaPath = target.mediaURL && new URL(target.mediaURL, location.href).pathname;
-      const matchesMedia = !mediaPath || [...(content?.querySelectorAll('a[href]') || [])]
-        .some(a => new URL(a.href).pathname.startsWith(mediaPath));
-      if (matchesMedia && content?.querySelector('.xfmgInfoBlock-title h2')?.textContent.trim() === target.title &&
-          !content.matches('[aria-busy="true"], .is-loading') &&
-          !content.querySelector('[aria-busy="true"], .is-loading')) {
-        return content;
+  function findActiveContainers() {
+    const results = [];
+    const dialogs = [...document.querySelectorAll('dialog')].filter(dlg => {
+      if (!dlg.isConnected) return false;
+      const aside = dlg.querySelector('aside[aria-label="Thảo luận về ảnh"]');
+      if (!aside) return false;
+      return dlg.open || dlg.hasAttribute('open') || getComputedStyle(dlg).display !== 'none';
+    });
+    for (const dlg of dialogs) {
+      const aside = dlg.querySelector('aside[aria-label="Thảo luận về ảnh"]');
+      if (aside) results.push({ mode: 'lightbox', root: dlg, sidebar: aside });
+    }
+    if (!results.length && location.pathname.startsWith('/media/')) {
+      const main = document.querySelector('main');
+      const blocked = main?.querySelector('[role="note"][aria-label*="thành viên có gói"], [role="note"][aria-label*="bình luận đang ẩn"]');
+      const hasMediaUi = main && (
+        main.querySelector('section[aria-label="Bình chọn đáp án"]') ||
+        main.querySelector('section[aria-label="Bình luận về ảnh"]') ||
+        main.querySelector('[aria-label*="Đang tải bình chọn"]')
+      );
+      if (main && hasMediaUi && !blocked) {
+        results.push({ mode: 'standalone', root: main, sidebar: main });
+      }
+    }
+    return results;
+  }
+
+  function parseCounter(root) {
+    const polite = root.querySelector('p[aria-live="polite"]')?.textContent || '';
+    let match = polite.match(/(\d+)\s*\/\s*(\d+)/);
+    if (match) return { index: Number(match[1]), total: Number(match[2]) };
+
+    const metaText = root.querySelector('aside[aria-label="Thảo luận về ảnh"]')?.textContent
+      || root.querySelector('h1')?.textContent
+      || root.querySelector('figcaption')?.textContent
+      || '';
+    match = metaText.match(/ảnh\s+(\d+)\s*\/\s*(\d+)/i);
+    if (match) return { index: Number(match[1]), total: Number(match[2]) };
+
+    const thumbCount = root.querySelectorAll('nav[aria-label="Ảnh thu nhỏ"] li').length;
+    return { index: null, total: thumbCount || null };
+  }
+
+  function formatQuestionTitle(mediaPath, index, total) {
+    const slugWithId = (mediaPath || '').replace(/^\/media\/|\/$/g, '');
+    const slug = slugWithId.replace(/\.\d+$/, '');
+    const base = slug.replace(/-(?:webp|jpe?g|png|gif|avif)$/i, '');
+    const qMatch = base.match(/^q(\d+)$/i);
+    if (qMatch) return 'Q' + qMatch[1];
+    if (base && !/^[0-9a-f]{16,}$/i.test(base)) {
+      return base.replace(/-(\d+)$/, ' ($1)');
+    }
+    if (index) return 'Câu ' + index + (total ? '/' + total : '');
+    return 'Câu hỏi';
+  }
+
+  function currentQuestion(ctx) {
+    const root = ctx.root;
+    const isLightbox = ctx.mode === 'lightbox';
+    const image = isLightbox
+      ? (root.querySelector('img[data-lightbox-img]') || root.querySelector('div.touch-none img') || root.querySelector('img'))
+      : (root.querySelector('figure img') || root.querySelector('img[data-lightbox-img]'));
+    if (!image) return null;
+
+    let mediaPath = '';
+    if (isLightbox) {
+      const openLink = root.querySelector('a[aria-label="Mở trang ảnh"]')?.getAttribute('href');
+      if (openLink) {
+        try { mediaPath = new URL(openLink, location.origin).pathname; } catch {}
+      }
+      if (!mediaPath && location.pathname.startsWith('/media/')) {
+        mediaPath = location.pathname;
+      }
+    } else if (location.pathname.startsWith('/media/')) {
+      mediaPath = location.pathname;
+    }
+
+    if (!mediaPath) return null;
+    const key = mediaPath.replace(/^\/media\/|\/$/g, '') || mediaPath;
+    const { index, total } = parseCounter(root);
+    const title = formatQuestionTitle(mediaPath, index, total);
+    return {
+      key,
+      title,
+      mediaPath,
+      mediaUrl: location.origin + mediaPath,
+      index,
+      total,
+      image,
+      exam: getExamInfo(root)
+    };
+  }
+
+  function findPollSection(container) {
+    return container?.querySelector('section[aria-label="Bình chọn đáp án"]') || null;
+  }
+
+  function isPollLoading(container) {
+    if (!container) return true;
+    if (container.matches('[aria-busy="true"], .is-loading')) return true;
+    if (container.querySelector('[aria-label*="Đang tải bình chọn"], [aria-busy="true"], .is-loading')) return true;
+    return !findPollSection(container);
+  }
+
+  function findCommentsContainer(container) {
+    if (!container) return null;
+    const standalone = container.querySelector('section[aria-label="Bình luận về ảnh"]');
+    if (standalone) return standalone;
+    const aside = container.matches('aside[aria-label="Thảo luận về ảnh"]')
+      ? container
+      : container.querySelector('aside[aria-label="Thảo luận về ảnh"]');
+    const searchRoot = aside || container;
+    const byStructure = searchRoot.querySelector('div:has(> div > h2):has(ul[aria-label="Bình luận"], [role="textbox"])');
+    if (byStructure) return byStructure;
+    const list = searchRoot.querySelector('ul[aria-label="Bình luận"]');
+    if (list?.parentElement) return list.parentElement;
+    for (const h2 of searchRoot.querySelectorAll('h2')) {
+      if (/^\s*Bình luận\b/i.test(h2.textContent || '')) {
+        return h2.closest('section') || h2.parentElement?.parentElement || null;
+      }
+    }
+    return null;
+  }
+
+  function parsePollOptionLetter(button) {
+    const spans = button.querySelectorAll(':scope > span');
+    const badgeText = spans[1]?.textContent?.trim() || '';
+    if (badgeText) {
+      const norm = normalize(badgeText);
+      if (norm) return norm;
+    }
+    const aria = button.getAttribute('aria-label') || '';
+    const match = aria.match(/Phương án\s+([^,]+)/i);
+    return match ? normalize(match[1]) : '';
+  }
+
+  function parsePollOptionStats(button) {
+    const aria = button.getAttribute('aria-label') || '';
+    const ariaMatch = aria.match(/Phương án\s+[^,]+,\s*(\d+)\s+người chọn,\s*(\d+(?:\.\d+)?)%/i);
+    if (ariaMatch) {
+      return { rawCount: Number(ariaMatch[1]), percent: Number(ariaMatch[2]) };
+    }
+    const spans = button.querySelectorAll(':scope > span');
+    const statWrap = spans[spans.length - 1];
+    const nums = [...(statWrap?.querySelectorAll('span') || [])].map(s => s.textContent.trim());
+    const rawCount = Number((nums[0] || '').replace(/[^\d]/g, '')) || 0;
+    const percent = Number((nums[1] || '').replace(/[^\d.]/g, '')) || 0;
+    return { rawCount, percent };
+  }
+
+  function readPollData(container, excludeOwnPreExisting) {
+    const section = findPollSection(container);
+    if (!section) return null;
+    const headerText = section.querySelector('header p')?.textContent || '';
+    const totalVoters = Number(headerText.match(/\d+/)?.[0] || 0);
+    const multiSwitch = section.querySelector('button[role="switch"]');
+    const multiSwitchOn = multiSwitch?.getAttribute('aria-checked') === 'true';
+    const buttons = [...section.querySelectorAll('[role="group"][aria-label="Các phương án"] button[aria-pressed]')];
+    const options = [];
+    let hasPrePressed = false;
+    for (const button of buttons) {
+      const key = parsePollOptionLetter(button);
+      if (!key) continue;
+      const pressed = button.getAttribute('aria-pressed') === 'true';
+      if (pressed) hasPrePressed = true;
+      const { rawCount, percent } = parsePollOptionStats(button);
+      const communityCount = excludeOwnPreExisting && pressed && rawCount > 0 ? rawCount - 1 : rawCount;
+      options.push({ key, rawCount, communityCount, percent, pressed, button });
+    }
+    const communityTotalVoters = Math.max(0, totalVoters - (excludeOwnPreExisting && hasPrePressed ? 1 : 0));
+    return {
+      ready: true,
+      section,
+      totalVoters,
+      communityTotalVoters,
+      multiSwitch,
+      multiSwitchOn,
+      options
+    };
+  }
+
+  function isFuoAiElement(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el.matches('.fuo-quiz, .fuo-spoiler-notice, header') || el.querySelector('[role="textbox"], iframe, h2')) return false;
+    const text = el.textContent || '';
+    if (!/\bFUO\s*AI\b/i.test(text)) return false;
+    const userLinks = [...el.querySelectorAll('a[href^="/u/"]')];
+    const isAiAuthor = userLinks.length === 0 || userLinks.some(a => /fuo[-_]?ai/i.test(a.getAttribute('href') || '') || /\bFUO\s*AI\b/i.test(a.textContent || ''));
+    return isAiAuthor && (/Đã ghim/i.test(text) || /(?:^|\n)\s*Đáp án\s*[:=]/im.test(text) || isAiAuthor);
+  }
+
+  function extractFuoAiText(el) {
+    const rich = el.querySelector('.rich-text');
+    if (rich) return commentText(rich);
+    const copy = el.cloneNode(true);
+    copy.querySelectorAll('button, time').forEach(n => n.remove());
+    copy.querySelectorAll('br').forEach(n => n.replaceWith('\n'));
+    copy.querySelectorAll('p, div, li').forEach(n => n.append('\n'));
+    return copy.textContent
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(l => l && !/^(?:AI|FUO\s*AI|Đã ghim|Thích|\d+\s*(?:ngày|giờ|phút|giây|tuần|tháng|năm))$/i.test(l))
+      .join('\n');
+  }
+
+  function readFuoAI(commentsContainer) {
+    if (!commentsContainer) return null;
+    const candidates = [
+      ...commentsContainer.querySelectorAll('ul[aria-label="Bình luận"] > li'),
+      ...[...commentsContainer.children].filter(el => !el.matches('ul[aria-label="Bình luận"]'))
+    ];
+    for (const el of candidates) {
+      if (!isFuoAiElement(el)) continue;
+      const text = extractFuoAiText(el);
+      const answer = commentVote(text);
+      if (!answer) continue;
+      const explanation = text
+        .split(/\r?\n/)
+        .filter(line => !/^\s*(?:đáp án(?:\s+đúng)?|answer)\s*[:=]?\s*[A-H]/i.test(line))
+        .join('\n')
+        .trim();
+      return { answer, explanation, element: el };
+    }
+    return null;
+  }
+
+  function readHumanComments(commentsContainer, fuoAiElement) {
+    const authors = new Set();
+    const votes = [];
+    for (const li of commentsContainer?.querySelectorAll('ul[aria-label="Bình luận"] > li') ?? []) {
+      if (li === fuoAiElement || isFuoAiElement(li)) continue;
+      const authorLink = li.querySelector('a[href^="/u/"]');
+      const author = authorLink?.getAttribute('href') || authorLink?.textContent.trim() || '';
+      if (/\bFUO\s*AI\b/i.test(authorLink?.textContent || '')) continue;
+      const body = li.querySelector('.rich-text') || li.querySelector('.comment-body .bbWrapper');
+      if (!body || (author && authors.has(author))) continue;
+      const vote = commentVote(commentText(body));
+      if (!vote) continue;
+      if (author) authors.add(author);
+      votes.push(vote);
+    }
+    return votes;
+  }
+
+  async function classifyQuestion(poll, humanVotes, fuoAi, image) {
+    const totalOptionVotes = poll ? poll.options.reduce((sum, o) => sum + o.communityCount, 0) : 0;
+    const hasMultiEvidence = Boolean(
+      humanVotes.some(v => v.length > 1) ||
+      (fuoAi?.answer && fuoAi.answer.length > 1) ||
+      poll?.multiSwitchOn ||
+      poll?.options.some(o => o.key.length > 1 && o.communityCount > 0) ||
+      (poll && poll.communityTotalVoters > 0 && totalOptionVotes > poll.communityTotalVoters)
+    );
+    if (hasMultiEvidence) return 'multiple';
+    if ((poll && poll.communityTotalVoters > 0) || humanVotes.length > 0 || fuoAi?.answer) {
+      return 'single';
+    }
+    return classifyImage(image);
+  }
+
+  function resolveCommunityAnswer(type, poll, humanVotes) {
+    if (type === 'multiple') {
+      const multiComments = humanVotes.filter(v => v.length > 1);
+      if (multiComments.length) {
+        const winner = consensus(multiComments);
+        if (winner) {
+          return {
+            answer: winner,
+            origin: 'comments',
+            source: multiComments.length === 1 ? '1 bình luận' : 'đa số bình luận'
+          };
+        }
+      }
+      if (poll && poll.communityTotalVoters > 0) {
+        const comboEntries = poll.options.filter(o => o.key.length > 1 && o.communityCount > 0)
+          .sort((a, b) => b.communityCount - a.communityCount);
+        if (comboEntries.length && (!comboEntries[1] || comboEntries[0].communityCount > comboEntries[1].communityCount)) {
+          return {
+            answer: comboEntries[0].key,
+            origin: 'poll',
+            source: 'bình chọn cộng đồng (' + poll.communityTotalVoters + ' người)'
+          };
+        }
+        const singleEntries = poll.options.filter(o => o.key.length === 1);
+        const majorityLetters = singleEntries.filter(o => o.communityCount / poll.communityTotalVoters > 0.5);
+        const exactHalfAmbiguity = poll.communityTotalVoters > 1 && singleEntries.some(o => o.communityCount * 2 === poll.communityTotalVoters);
+        if (majorityLetters.length >= 2 && !exactHalfAmbiguity) {
+          const combined = normalize(majorityLetters.map(o => o.key).join(''));
+          if (combined) {
+            return {
+              answer: combined,
+              origin: 'poll',
+              source: 'bình chọn cộng đồng (' + poll.communityTotalVoters + ' người)'
+            };
+          }
+        }
+      }
+      return null;
+    }
+
+    if (poll && poll.communityTotalVoters > 0) {
+      const singleEntries = poll.options
+        .filter(o => o.key.length === 1 && o.communityCount > 0)
+        .sort((a, b) => b.communityCount - a.communityCount);
+      if (singleEntries.length && (!singleEntries[1] || singleEntries[0].communityCount > singleEntries[1].communityCount)) {
+        return {
+          answer: singleEntries[0].key,
+          origin: 'poll',
+          source: 'bình chọn cộng đồng (' + poll.communityTotalVoters + ' người)'
+        };
+      }
+      return null;
+    }
+
+    if (humanVotes.length) {
+      const winner = consensus(humanVotes);
+      if (winner) {
+        return {
+          answer: winner,
+          origin: 'comments',
+          source: humanVotes.length === 1 ? '1 bình luận' : 'đa số bình luận'
+        };
+      }
+    }
+    return null;
+  }
+
+  async function resolveAnswer(target, submission) {
+    const community = resolveCommunityAnswer(submission.type, submission.baselinePoll, submission.humanVotes);
+    if (community) return community;
+    if (submission.fuoAi?.answer) {
+      return {
+        answer: submission.fuoAi.answer,
+        origin: 'fuo-ai',
+        source: 'FUO AI (bình luận ghim)'
+      };
+    }
+    const solution = await loadAISolution(target, submission);
+    return {
+      answer: solution.answer,
+      origin: 'ai',
+      source: (solution.providerName || 'AI') + ' · đáp án tham khảo',
+      solution
+    };
+  }
+
+  function isSlideSynced(ctx, target) {
+    if (ctx.mode !== 'lightbox') return true;
+    const openLink = ctx.root.querySelector('a[aria-label="Mở trang ảnh"]')?.getAttribute('href');
+    if (openLink) {
+      try {
+        if (new URL(openLink, location.origin).pathname !== target.mediaPath) return false;
+      } catch {}
+    }
+    const toolbarMatch = ctx.root.querySelector('p[aria-live="polite"]')?.textContent.match(/(\d+)\s*\/\s*(\d+)/);
+    const sidebarMatch = ctx.sidebar?.textContent.match(/Ảnh\s+(\d+)\s*\/\s*(\d+)/i);
+    if (toolbarMatch && sidebarMatch && toolbarMatch[1] !== sidebarMatch[1]) {
+      return false;
+    }
+    return true;
+  }
+
+  async function waitForQuestionReady(ctx, target) {
+    const deadline = Date.now() + 5000;
+    while (currentQuestion(ctx)?.key === target.key && ctx.root.isConnected) {
+      if (isSlideSynced(ctx, target) && !isPollLoading(ctx.sidebar)) {
+        return ctx.sidebar;
       }
       if (Date.now() >= deadline) return null;
       await new Promise(resolve => setTimeout(resolve, 80));
@@ -2154,88 +2621,84 @@
     return Boolean(target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]'));
   }
 
-  function orderedReviewKeys(predicate) {
+  function orderedReviewKeys(examInfo, predicate) {
+    const rev = currentReview(examInfo);
     const matched = [];
     const seen = new Set();
     for (const [key] of catalog) {
-      const item = review.get(key);
+      const item = rev.get(key);
       if (item && predicate(item)) {
         matched.push(key);
         seen.add(key);
       }
     }
     const extra = [];
-    for (const [key, item] of review) {
+    for (const [key, item] of rev) {
       if (!seen.has(key) && item && predicate(item)) extra.push(key);
     }
-    extra.sort((a, b) => (Number(a.match(/\d+/)?.[0]) || 0) - (Number(b.match(/\d+/)?.[0]) || 0));
+    extra.sort((a, b) => {
+      const numA = rev.get(a)?.index || Number(a.match(/\d+/)?.[0]) || 0;
+      const numB = rev.get(b)?.index || Number(b.match(/\d+/)?.[0]) || 0;
+      return numA - numB || a.localeCompare(b);
+    });
     return matched.concat(extra);
   }
 
-  function computeProgress() {
-    const keys = new Set([...catalog.keys(), ...attempts.keys(), ...review.keys()]);
+  function computeProgress(examInfo, currentTarget) {
+    const rev = currentReview(examInfo);
+    const keys = new Set([...catalog.keys(), ...attempts.keys(), ...rev.keys()]);
     let answered = 0;
     let right = 0;
     for (const key of keys) {
       const att = attempts.get(key);
-      const rev = review.get(key);
-      const answer = att?.answer || rev?.answer || '';
+      const item = rev.get(key);
+      const answer = att?.answer || item?.answer || '';
       if (!answer) continue;
       answered++;
-      const selected = att?.answer ? att.selected : (rev?.selected || '');
+      const selected = att?.answer ? att.selected : (item?.selected || '');
       if (selected && selected === answer) right++;
     }
-    const wrongKeys = orderedReviewKeys(item => Boolean(item.wrong));
-    const starredKeys = orderedReviewKeys(item => Boolean(item.starred));
-    return { total: catalog.size, answered, right, wrongKeys, starredKeys };
+    const wrongKeys = orderedReviewKeys(examInfo, item => Boolean(item.wrong));
+    const starredKeys = orderedReviewKeys(examInfo, item => Boolean(item.starred));
+    const total = Math.max(catalog.size, currentTarget?.total || 0);
+    return { total, answered, right, wrongKeys, starredKeys };
   }
 
-  function jumpToQuestion(root, key) {
+  function jumpToQuestion(ctx, key) {
+    const rev = currentReview(activeExamInfo);
     const entry = catalog.get(key);
-    const targetUrl = entry?.url || review.get(key)?.url || '';
-    const targetStable = targetUrl ? stableImageURL(targetUrl) : '';
-    const targetTitle = entry?.title || key.split(' | ')[0];
-
-    const fb = typeof window.Fancybox?.getInstance === 'function' ? window.Fancybox.getInstance() : null;
-    if (fb && typeof fb.jumpTo === 'function' && Array.isArray(fb.carousel?.slides)) {
-      const idx = fb.carousel.slides.findIndex(slide => {
-        const src = slide?.src || slide?.thumbSrc || '';
-        return (targetStable && stableImageURL(src) === targetStable)
-          || (slide?.caption && String(slide.caption).includes(targetTitle));
-      });
-      if (idx >= 0) {
-        fb.jumpTo(idx);
+    const revItem = rev.get(key);
+    const idx = entry?.index || revItem?.index || Number(key.match(/^q(\d+)/i)?.[1]) || 0;
+    if (ctx.mode === 'lightbox' && idx > 0) {
+      const thumbBtn = ctx.root.querySelector('nav[aria-label="Ảnh thu nhỏ"] li button[aria-label="Ảnh ' + idx + '"]')
+        || ctx.root.querySelectorAll('nav[aria-label="Ảnh thu nhỏ"] li button')[idx - 1];
+      if (thumbBtn) {
+        thumbBtn.click();
         return true;
       }
     }
-
-    const catalogKeys = [...catalog.keys()];
-    const catalogIndex = catalogKeys.indexOf(key);
-    const thumbs = [...root.querySelectorAll('.fancybox__thumb, .f-thumbs__slide')];
-    if (catalogIndex >= 0 && thumbs[catalogIndex]) {
-      thumbs[catalogIndex].click();
-      return true;
-    }
-
-    if (entry?.link?.isConnected) {
-      entry.link.click();
-      return true;
-    }
-
-    const links = [...document.querySelectorAll('a[href]')].filter(a => !a.closest('.fancybox__container'));
-    const fallbackLink = links.find(a => {
-      const title = attachmentTitle(a);
-      return (title && questionKey(title, a.href) === key)
-        || (targetStable && stableImageURL(a.href) === targetStable);
+    const targetUrl = entry?.url || revItem?.url || '';
+    let targetPath = '';
+    try { targetPath = targetUrl ? new URL(targetUrl, location.origin).pathname : ''; } catch {}
+    const links = [...document.querySelectorAll('a[href]')];
+    const matchLink = links.find(a => {
+      const href = a.getAttribute('href') || '';
+      if (!href.includes('/media/')) return false;
+      try {
+        const p = new URL(href, location.origin).pathname;
+        return (targetPath && p === targetPath) || p.includes('/' + key);
+      } catch {
+        return false;
+      }
     });
-    if (fallbackLink) {
-      fallbackLink.click();
+    if (matchLink) {
+      matchLink.click();
       return true;
     }
     return false;
   }
 
-  function mount(root, sidebar) {
+  function mount(ctx) {
     const panel = document.createElement('section');
     panel.className = 'fuo-quiz';
     panel.setAttribute('aria-label', 'Trả lời câu hỏi');
@@ -2303,10 +2766,13 @@
     reviewActions.append(reviewNextBtn, reviewExitBtn);
     reviewBar.append(reviewInfo, reviewActions);
 
+    const multiHint = document.createElement('div');
+    multiHint.className = 'fuo-multi-hint';
+    multiHint.hidden = true;
     const status = document.createElement('div');
     status.setAttribute('role', 'status');
-    const comments = document.createElement('button');
-    comments.title = 'Hiện / Ẩn bình luận (M hoặc C sau khi chấm)';
+    const commentsBtn = document.createElement('button');
+    commentsBtn.title = 'Hiện / Ẩn kết quả & bình luận (M)';
     const reset = document.createElement('button');
     reset.title = 'Làm lại câu hiện tại (R)';
     const star = document.createElement('button');
@@ -2315,7 +2781,8 @@
     exportButton.type = 'button';
     exportButton.textContent = 'Xuất CSV';
     exportButton.onclick = () => {
-      const count = exportReview();
+      if (!question || !state) return;
+      const count = exportReview(question.exam);
       state.message = 'Đã xuất CSV: ' + count + ' câu cần ôn.';
       render();
     };
@@ -2329,19 +2796,22 @@
     examButton.textContent = 'Thi thử';
     examButton.title = 'Bắt đầu chế độ thi thử bấm giờ';
     star.onclick = () => {
-      if (!state) return;
-      const item = review.get(question.key) || {};
+      if (!question || !state) return;
+      const store = getReviewStore(question.exam);
+      const item = store.questions.get(question.key) || {};
       item.starred = !item.starred;
-      item.url = question.image?.src || item.url || '';
-      review.set(question.key, item);
-      saveReview();
+      item.title = question.title;
+      item.index = question.index || item.index || 0;
+      item.url = question.mediaUrl || question.image?.src || item.url || '';
+      store.questions.set(question.key, item);
+      saveReview(question.exam);
       render();
     };
     const ai = document.createElement('button');
     ai.className = 'fuo-ai-trigger';
     ai.type = 'button';
     ai.textContent = 'Xem đáp án AI';
-    ai.title = 'Xem đáp án và lời giải AI (E)';
+    ai.title = 'Xem đáp án và lời giải AI (I)';
     const aiSettings = document.createElement('button');
     aiSettings.className = 'fuo-ai-settings-btn';
     aiSettings.type = 'button';
@@ -2354,23 +2824,89 @@
     aiResult.setAttribute('role', 'status');
     aiResult.hidden = true;
     const submit = document.createElement('button');
+    submit.className = 'fuo-submit-btn';
     submit.type = 'button';
-    submit.textContent = 'Submit';
+    submit.textContent = 'Chấm đáp án';
     submit.title = 'Nộp đáp án đã chọn (Enter)';
     submit.onclick = () => grade();
     const retry = document.createElement('button');
     retry.type = 'button';
     retry.textContent = 'Thử lại phân loại';
     retry.onclick = () => prepare(question, state);
-    const distribution = document.createElement('div');
-    distribution.style.flexBasis = '100%';
-    const options = document.createElement('div');
-    options.className = 'fuo-options';
-    comments.type = reset.type = 'button';
+    commentsBtn.type = reset.type = 'button';
     reset.textContent = 'Làm lại';
 
-    let question, state;
-    let showComments = false;
+    let question = null;
+    let state = null;
+
+    function attachPanel() {
+      if (ctx.mode === 'lightbox') {
+        if (panel.parentElement !== ctx.sidebar || ctx.sidebar.firstElementChild !== panel) {
+          ctx.sidebar.prepend(panel);
+        }
+        return;
+      }
+      const pollSection = findPollSection(ctx.sidebar);
+      if (pollSection?.parentElement) {
+        if (panel.parentElement !== pollSection.parentElement || panel.nextElementSibling !== pollSection) {
+          pollSection.parentElement.insertBefore(panel, pollSection);
+        }
+      } else if (!panel.isConnected) {
+        ctx.sidebar.prepend(panel);
+      }
+    }
+
+    function setToggleClass(el, cls, active) {
+      if (el && el.classList.contains(cls) !== Boolean(active)) {
+        el.classList.toggle(cls, Boolean(active));
+      }
+    }
+
+    function setAttrIfChanged(el, name, val) {
+      if (val === null || val === undefined || val === '') {
+        if (el.hasAttribute(name)) el.removeAttribute(name);
+      } else if (el.getAttribute(name) !== String(val)) {
+        el.setAttribute(name, String(val));
+      }
+    }
+
+    function syncNativeDOM() {
+      const poll = readPollData(ctx.sidebar, false);
+      const pollSection = poll?.section;
+      const commentsContainer = findCommentsContainer(ctx.sidebar);
+      const synced = Boolean(question && isSlideSynced(ctx, question));
+
+      if (pollSection) {
+        const revealed = Boolean(!examMode.active && state?.revealed && synced);
+        const retrying = Boolean(!examMode.active && state?.retrying && !state?.revealed && synced);
+        setToggleClass(pollSection, 'fuo-revealed', revealed);
+        setToggleClass(pollSection, 'fuo-retrying', retrying);
+        for (const opt of poll.options) {
+          if (!state || !synced) {
+            setAttrIfChanged(opt.button, 'data-fuo-mark', null);
+            setAttrIfChanged(opt.button, 'data-fuo-selected', null);
+            continue;
+          }
+          const isSelected = state.selected.includes(opt.key);
+          const isRight = !examMode.active && state.answer && opt.key.length === 1 && state.answer.includes(opt.key);
+          const isExactComboRight = !examMode.active && state.answer && opt.key.length > 1 && state.answer === opt.key;
+          const isWrong = !examMode.active && state.answer && isSelected && !(isRight || isExactComboRight);
+          const mark = (isRight || isExactComboRight) ? 'right' : isWrong ? 'wrong' : null;
+          setAttrIfChanged(opt.button, 'data-fuo-mark', mark);
+          setAttrIfChanged(opt.button, 'data-fuo-selected', (!state.answer && isSelected) ? 'true' : null);
+        }
+      }
+
+      if (commentsContainer) {
+        setToggleClass(commentsContainer, 'fuo-comments-visible', Boolean(!examMode.active && state?.revealed && synced));
+      }
+
+      const revealed = Boolean(state?.revealed);
+      const nextLabel = revealed ? 'Ẩn kết quả & bình luận' : 'Hiện kết quả & bình luận';
+      if (commentsBtn.textContent !== nextLabel) commentsBtn.textContent = nextLabel;
+      setAttrIfChanged(commentsBtn, 'aria-expanded', String(revealed));
+      return poll;
+    }
 
     function formatClock(ms) {
       const totalSec = Math.max(0, Math.ceil(ms / 1000));
@@ -2389,7 +2925,7 @@
     function renderExamBar() {
       examBar.hidden = !examMode.active;
       if (!examMode.active) return;
-      const total = catalog.size || Math.max(1, examMode.answers.size);
+      const total = Math.max(catalog.size, question?.total || 0, examMode.answers.size, 1);
       const left = Math.max(0, examMode.endsAt - Date.now());
       examInfo.textContent = 'Thi thử · Đã chọn ' + examMode.answers.size + '/' + total + ' · Còn ' + formatClock(left);
     }
@@ -2405,7 +2941,7 @@
         (s.timedOut ? 'Hết giờ thi thử' : 'Kết quả thi thử') + ': ' + s.rightCount + '/' + s.gradedCount + ' đúng (' + pct + '%)',
         'Thời gian: ' + formatClock(s.elapsed)
       ];
-      if (s.ungradedCount > 0) parts.push('Chưa chấm (thiếu bình luận): ' + s.ungradedCount);
+      if (s.ungradedCount > 0) parts.push('Chưa chấm (thiếu đáp án cộng đồng/FUO AI): ' + s.ungradedCount);
       headline.textContent = parts.join(' · ');
       examSummary.append(headline);
       if (s.wrongList.length > 0) {
@@ -2416,8 +2952,8 @@
           btn.type = 'button';
           btn.className = 'fuo-jump-btn';
           btn.dataset.kind = 'wrong';
-          btn.textContent = (catalog.get(key)?.title || key.split(' | ')[0]).replace(/\.[^.]+$/, '');
-          btn.onclick = () => jumpToQuestion(root, key);
+          btn.textContent = (catalog.get(key)?.title || currentReview(activeExamInfo).get(key)?.title || key.split(' | ')[0]).replace(/\.[^.]+$/, '');
+          btn.onclick = () => jumpToQuestion(ctx, key);
           wrongRow.append(btn);
         }
         examSummary.append(wrongRow);
@@ -2434,6 +2970,7 @@
       stopExamTimer();
       const elapsed = Date.now() - examMode.startedAt;
       examMode.active = false;
+      const store = getReviewStore(question?.exam || activeExamInfo);
       let gradedCount = 0;
       let rightCount = 0;
       let ungradedCount = 0;
@@ -2441,15 +2978,15 @@
       for (const [key, selected] of examMode.answers.entries()) {
         if (!selected) continue;
         const att = attempts.get(key);
-        const rev = review.get(key);
-        const votes = att?.votes || [];
-        const voteAnswer = consensus(votes);
-        const answer = voteAnswer || rev?.answer || '';
+        const revItem = store.questions.get(key);
+        const community = att ? resolveCommunityAnswer(att.type || 'single', att.baselinePoll, att.humanVotes || []) : null;
+        const answer = community?.answer || att?.fuoAi?.answer || revItem?.answer || '';
         if (!answer) {
           ungradedCount++;
           continue;
         }
-        const source = voteAnswer ? (votes.length === 1 ? '1 bình luận' : 'đa số bình luận') : (rev?.source || 'lịch sử đã chấm');
+        const origin = community ? community.origin : (att?.fuoAi?.answer ? 'fuo-ai' : 'ai');
+        const source = community ? community.source : (att?.fuoAi?.answer ? 'FUO AI (bình luận ghim)' : (revItem?.source || 'lịch sử đã chấm'));
         gradedCount++;
         const isRight = answer === selected;
         if (isRight) rightCount++;
@@ -2457,10 +2994,13 @@
         if (att) {
           att.selected = selected;
           att.answer = answer;
-          att.answerOrigin = voteAnswer ? 'comments' : 'ai';
+          att.answerOrigin = origin;
+          att.revealed = true;
           att.message = (isRight ? 'Đúng' : 'Sai') + ' · Nguồn ' + source;
         }
-        const item = review.get(key) || {};
+        const item = store.questions.get(key) || {};
+        item.title = catalog.get(key)?.title || item.title || key;
+        item.index = catalog.get(key)?.index || item.index || 0;
         item.selected = selected;
         item.answer = answer;
         item.source = source;
@@ -2469,9 +3009,9 @@
           item.wrong = true;
           item.wrongSelected = selected;
         }
-        review.set(key, item);
+        store.questions.set(key, item);
       }
-      if (gradedCount > 0) saveReview();
+      if (gradedCount > 0) saveReview(question?.exam || activeExamInfo);
       examMode.summary = { timedOut, elapsed, gradedCount, rightCount, ungradedCount, wrongList };
       render();
     }
@@ -2497,14 +3037,14 @@
       examMode.startedAt = Date.now();
       examMode.endsAt = examMode.startedAt + Math.round(minutes * 60 * 1000);
       examMode.active = true;
-      showComments = false;
-      syncComments();
       for (const att of attempts.values()) {
         att.selected = '';
         att.answer = '';
         att.answerOrigin = '';
         att.aiText = '';
         att.message = '';
+        att.revealed = false;
+        att.retrying = true;
       }
       stopExamTimer();
       examMode.timerId = setInterval(() => {
@@ -2541,7 +3081,8 @@
     }
 
     function startReviewRound() {
-      const queue = orderedReviewKeys(item => Boolean(item.wrong || item.starred));
+      const exam = question?.exam || activeExamInfo;
+      const queue = orderedReviewKeys(exam, item => Boolean(item.wrong || item.starred));
       if (!queue.length) return;
       if (examMode.active) {
         stopExamTimer();
@@ -2559,10 +3100,12 @@
           att.answerOrigin = '';
           att.aiText = '';
           att.message = '';
+          att.revealed = false;
+          att.retrying = true;
         }
       }
       if (!question || question.key !== queue[0]) {
-        jumpToQuestion(root, queue[0]);
+        jumpToQuestion(ctx, queue[0]);
       }
       render();
     }
@@ -2579,46 +3122,11 @@
       render();
     };
 
-    function syncComments() {
-      const content = sidebar.querySelector('.fancybox-sidebar-content');
-      const matchesQuestion = question &&
-        content?.querySelector('.xfmgInfoBlock-title h2')?.textContent.trim() === question.title;
-      content?.classList.toggle('fuo-comments-visible', Boolean(!examMode.active && showComments && matchesQuestion));
-      comments.textContent = showComments ? 'Ẩn bình luận' : 'Hiện bình luận';
-      comments.setAttribute('aria-expanded', String(showComments));
-    }
-    comments.onclick = () => {
-      if (examMode.active) return;
-      showComments = !showComments;
-      syncComments();
+    commentsBtn.onclick = () => {
+      if (examMode.active || !state) return;
+      state.revealed = !state.revealed;
+      render();
     };
-    const buttons = letters.map(letter => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.onclick = () => {
-        if (!state?.type || state.busy || state.aiBusy) return;
-        if (examMode.active) {
-          if (state.type === 'single') {
-            state.selected = state.selected === letter ? '' : letter;
-          } else {
-            state.selected = state.selected.includes(letter)
-              ? state.selected.replace(letter, '') : normalize(state.selected + letter);
-          }
-          if (state.selected) examMode.answers.set(question.key, state.selected);
-          else examMode.answers.delete(question.key);
-          render();
-          return;
-        }
-        if (state.answer) return;
-        if (state.type === 'single') { state.selected = letter; grade(); }
-        else {
-          state.selected = state.selected.includes(letter)
-            ? state.selected.replace(letter, '') : normalize(state.selected + letter);
-          render();
-        }
-      };
-      return button;
-    });
 
     function nextJumpTarget(list) {
       if (!list.length) return '';
@@ -2637,8 +3145,8 @@
         render();
         return;
       }
-      if (!jumpToQuestion(root, targetKey)) {
-        const label = (catalog.get(targetKey)?.title || targetKey.split(' | ')[0]).replace(/\.[^.]+$/, '');
+      if (!jumpToQuestion(ctx, targetKey)) {
+        const label = (catalog.get(targetKey)?.title || currentReview(question?.exam).get(targetKey)?.title || targetKey.split(' | ')[0]).replace(/\.[^.]+$/, '');
         state.message = 'Không tìm thấy slide của ' + label + ' trong thư viện ảnh hiện tại.';
         render();
       }
@@ -2650,7 +3158,7 @@
     jumpStarredBtn.onclick = () => handleJump(currentStarredKeys);
 
     function renderProgress() {
-      const stats = computeProgress();
+      const stats = computeProgress(question?.exam || activeExamInfo, question);
       currentWrongKeys = stats.wrongKeys;
       currentStarredKeys = stats.starredKeys;
       const hasAny = stats.total > 0 || stats.answered > 0 || stats.wrongKeys.length > 0 || stats.starredKeys.length > 0;
@@ -2684,56 +3192,52 @@
     }
 
     function render() {
+      attachPanel();
       panel.hidden = !state;
-      if (!state) return;
-      title.textContent = question.title.replace(/\.[^.]+$/, '') + (state.type ? (state.type === 'multiple' ? ' · Chọn nhiều đáp án' : ' · Chọn một đáp án') : ' · Đang phân loại');
+      if (!state || !question) {
+        syncNativeDOM();
+        return;
+      }
+      const livePoll = syncNativeDOM();
+      const nativeMultiOn = Boolean(livePoll?.multiSwitchOn);
+      const isMulti = state.type === 'multiple' || nativeMultiOn;
+
+      title.textContent = question.title + (state.type
+        ? (state.type === 'multiple' ? ' · Chọn nhiều đáp án' : ' · Chọn một đáp án')
+        : ' · Đang phân loại');
       renderExamBar();
       renderExamSummary();
       renderReviewBar();
       renderProgress();
-      submit.hidden = examMode.active || state.type !== 'multiple';
+
+      multiHint.hidden = !( !examMode.active && state.type === 'multiple' && !nativeMultiOn && !state.answer );
+      if (!multiHint.hidden) {
+        multiHint.textContent = 'Câu chọn nhiều — bật "Nhiều đáp án" bên dưới rồi chọn và bấm Chấm đáp án.';
+      }
+
+      submit.hidden = examMode.active || !isMulti;
       submit.disabled = Boolean(!state.selected || state.busy || state.aiBusy || state.answer);
       retry.hidden = !state.typeError;
       retry.disabled = Boolean(state.busy);
-      distribution.replaceChildren();
-      if (!examMode.active && state.answer && state.votes.length) {
-        const counts = new Map();
-        state.votes.forEach(v => counts.set(v, (counts.get(v) || 0) + 1));
-        const label = document.createElement('div');
-        label.textContent = 'Tỷ lệ bình luận (không phải xác suất đúng)';
-        distribution.append(label);
-        for (const [vote, count] of [...counts].sort((a, b) => b[1] - a[1])) {
-          const row = document.createElement('div');
-          const ratio = count / state.votes.length * 100;
-          row.textContent = [...vote].join(',') + ': ' + Number(ratio.toFixed(1)) + '% ';
-          const meter = document.createElement('meter');
-          meter.min = 0; meter.max = 100; meter.value = ratio;
-          meter.setAttribute('aria-label', [...vote].join(','));
-          row.append(meter); distribution.append(row);
-        }
-      }
-      for (const [index, button] of buttons.entries()) {
-        const letter = letters[index];
-        const selected = state.selected.includes(letter);
-        const right = !examMode.active && state.answer.includes(letter);
-        const wrong = !examMode.active && state.answer && selected && !right;
-        button.textContent = letter + (right ? ' ✓' : wrong ? ' ✗' : '');
-        button.dataset.mark = right ? 'right' : wrong ? 'wrong' : '';
-        button.setAttribute('aria-pressed', String(selected));
-        button.disabled = Boolean(!state.type || state.busy || state.aiBusy || (!examMode.active && state.answer));
-      }
-      const starred = Boolean(review.get(question.key)?.starred);
+
+      const store = getReviewStore(question.exam);
+      const starred = Boolean(store.questions.get(question.key)?.starred);
       star.textContent = starred ? '★ Đã đánh dấu' : '☆ Đánh dấu';
       star.setAttribute('aria-pressed', String(starred));
       star.title = 'Đánh dấu câu nghi vấn để ôn lại (S)';
-      comments.disabled = examMode.active;
-      reset.disabled = state.busy || state.aiBusy || !state.selected;
+      commentsBtn.disabled = examMode.active;
+      reset.disabled = Boolean(state.busy || state.aiBusy || (!state.selected && !state.answer));
       ai.disabled = Boolean(examMode.active || state.busy || state.aiBusy);
       ai.textContent = state.aiBusy ? 'Đang hỏi ' + getActiveProvider().name + '…' : 'Xem đáp án AI';
       examButton.hidden = examMode.active;
+
       aiResult.hidden = examMode.active || !state.aiText;
-      const disagreement = state.answer && state.answerOrigin === 'comments' && state.aiSolution && state.aiSolution.answer !== state.answer
-        ? '\n\nLưu ý: AI chọn ' + [...state.aiSolution.answer].join(',') + ', khác đáp án bình luận ' + [...state.answer].join(',') + '. Kết quả chấm vẫn theo bình luận.' : '';
+      const fuoAiDiffers = !examMode.active && state.answer && (state.answerOrigin === 'poll' || state.answerOrigin === 'comments') && state.fuoAi?.answer && state.fuoAi.answer !== state.answer
+        ? ' Lưu ý: FUO AI chọn ' + [...state.fuoAi.answer].join(',') + ', khác đáp án cộng đồng ' + [...state.answer].join(',') + '.'
+        : '';
+      const disagreement = state.answer && (state.answerOrigin === 'poll' || state.answerOrigin === 'comments' || state.answerOrigin === 'fuo-ai') && state.aiSolution && state.aiSolution.answer !== state.answer
+        ? '\n\nLưu ý: AI chọn ' + [...state.aiSolution.answer].join(',') + ', khác đáp án ' + [...state.answer].join(',') + '. Kết quả chấm vẫn giữ nguyên.'
+        : '';
       const aiText = (state.aiText || '') + (state.aiText && disagreement ? disagreement : '');
       if (aiResult.dataset.source !== aiText) {
         aiResult.dataset.source = aiText;
@@ -2793,13 +3297,19 @@
           });
         }
       }
+
+      const defaultMsg = state.type
+        ? (isMulti
+          ? (state.selected ? 'Đã chọn: ' + [...state.selected].join(',') + ' — bấm Chấm đáp án để kiểm tra.' : 'Chọn các đáp án bên dưới rồi bấm Chấm đáp án.')
+          : 'Bấm trực tiếp phương án bên dưới để chấm ngay.')
+        : 'Đang phân loại câu hỏi…';
       status.textContent = examMode.active
         ? (state.selected ? 'Đã lưu lựa chọn ' + [...state.selected].join(',') + ' (chưa chấm).' : 'Chế độ thi thử: chọn đáp án rồi chuyển câu tiếp.')
-        : (state.message || (state.type === 'multiple' ? 'Chọn các đáp án rồi bấm Submit.' : 'Bấm một đáp án để chấm ngay.'));
+        : ((state.message || defaultMsg) + (state.message && fuoAiDiffers ? fuoAiDiffers : ''));
     }
 
     ai.onclick = async () => {
-      const target = currentQuestion(root);
+      const target = currentQuestion(ctx);
       if (!state || !target || target.key !== question.key || state.busy || state.aiBusy) return;
       if (state.aiSolution && state.aiSelected === normalize(state.selected || '') && state.aiConfigSig === configSignature(getActiveProvider())) {
         state.aiText = aiSolutionText(state.aiSolution);
@@ -2822,17 +3332,20 @@
     };
 
     reset.onclick = () => {
+      if (!state) return;
       state.selected = '';
       if (examMode.active && question) examMode.answers.delete(question.key);
       state.aiText = '';
       state.answer = '';
       state.answerOrigin = '';
       state.message = '';
+      state.revealed = false;
+      state.retrying = true;
       render();
     };
 
     async function grade() {
-      const target = currentQuestion(root);
+      const target = currentQuestion(ctx);
       if (!state || !target || target.key !== question.key || !state.type || !state.selected || state.busy || state.aiBusy || state.answer) return;
       const submission = state;
       const selected = submission.selected;
@@ -2840,42 +3353,50 @@
       submission.message = 'Đang kiểm tra đáp án…';
       render();
       try {
-        const votes = submission.votes;
-        let answer = consensus(votes);
-        let source = votes.length === 1 ? '1 bình luận' : 'đa số bình luận';
-        let usedAI = false;
-        if (!answer) {
-          const solution = await loadAISolution(target, submission);
-          answer = solution.answer;
-          submission.aiText = aiSolutionText(solution);
-          source = (solution.providerName || 'AI') + ' · đáp án tham khảo';
-          usedAI = true;
+        const resolved = await resolveAnswer(target, submission);
+        if (resolved.solution) {
+          submission.aiText = aiSolutionText(resolved.solution);
         }
-        submission.answer = answer;
-        submission.answerOrigin = usedAI ? 'ai' : 'comments';
-        const item = review.get(target.key) || {};
+        submission.answer = resolved.answer;
+        submission.answerOrigin = resolved.origin;
+        submission.revealed = true;
+        const store = getReviewStore(target.exam);
+        const item = store.questions.get(target.key) || {};
+        item.title = target.title;
+        item.index = target.index || item.index || 0;
         item.selected = selected;
-        item.answer = answer;
-        item.source = source;
-        item.url = target.image?.src || item.url || '';
-        if (answer !== selected) {
+        item.answer = resolved.answer;
+        item.source = resolved.source;
+        item.url = target.mediaUrl || target.image?.src || item.url || '';
+        if (resolved.answer !== selected) {
           item.wrong = true;
           item.wrongSelected = selected;
         }
-        review.set(target.key, item);
-        saveReview();
-        const result = answer === selected ? 'Đúng' : 'Sai';
-        if (reviewRound.active && answer === selected) {
+        store.questions.set(target.key, item);
+        saveReview(target.exam);
+        const result = resolved.answer === selected ? 'Đúng' : 'Sai';
+        if (reviewRound.active && resolved.answer === selected) {
           reviewRound.remaining.delete(target.key);
         }
-        submission.message = result + ' · Nguồn ' + source;
+        submission.message = result + ' · Nguồn ' + resolved.source;
       } catch (error) {
         submission.message = error.message || 'Chưa chấm được câu này.';
       } finally {
         submission.busy = false;
-        maybeExport();
+        maybeExport(target, submission);
         if (state === submission) render();
       }
+    }
+
+    function captureBaseline(submission, excludeOwn) {
+      const poll = readPollData(ctx.sidebar, excludeOwn);
+      const commentsContainer = findCommentsContainer(ctx.sidebar);
+      const fuoAi = readFuoAI(commentsContainer);
+      const humanVotes = readHumanComments(commentsContainer, fuoAi?.element || null);
+      submission.baselinePoll = poll;
+      submission.fuoAi = fuoAi;
+      submission.humanVotes = humanVotes;
+      return { poll, fuoAi, humanVotes };
     }
 
     async function prepare(target, submission) {
@@ -2885,12 +3406,10 @@
       submission.message = 'Đang phân loại câu hỏi…';
       render();
       try {
-        const content = await waitForComments(root, target);
-        if (!content) throw new Error('Bình luận chưa tải xong. Bấm Thử lại phân loại.');
-        submission.votes = readVotes(content);
-        submission.type = submission.votes.length
-          ? (submission.votes.some(v => v.length > 1) ? 'multiple' : 'single')
-          : await classifyImage(target.image);
+        const ready = await waitForQuestionReady(ctx, target);
+        if (!ready) throw new Error('Bình luận chưa tải xong. Bấm Thử lại phân loại.');
+        const { poll, fuoAi, humanVotes } = captureBaseline(submission, true);
+        submission.type = await classifyQuestion(poll, humanVotes, fuoAi, target.image);
         submission.message = '';
       } catch (error) {
         submission.typeError = true;
@@ -2901,10 +3420,76 @@
       }
     }
 
+    function refreshAsyncBaseline() {
+      if (!question || !state || state.busy || state.answer || state.selected || state.retrying || !state.type) return;
+      if (!isSlideSynced(ctx, question) || isPollLoading(ctx.sidebar)) return;
+      const { poll, fuoAi, humanVotes } = captureBaseline(state, true);
+      const totalOptionVotes = poll ? poll.options.reduce((sum, o) => sum + o.communityCount, 0) : 0;
+      if (state.type === 'single' && (
+        humanVotes.some(v => v.length > 1) ||
+        (fuoAi?.answer && fuoAi.answer.length > 1) ||
+        poll?.multiSwitchOn ||
+        poll?.options.some(o => o.key.length > 1 && o.communityCount > 0) ||
+        (poll && poll.communityTotalVoters > 0 && totalOptionVotes > poll.communityTotalVoters)
+      )) {
+        state.type = 'multiple';
+        render();
+      }
+    }
+
+    // Capture-phase delegation runs BEFORE React mutates poll counts/aria-pressed.
+    ctx.sidebar.addEventListener('click', event => {
+      const targetEl = event.target instanceof Element ? event.target : null;
+      if (!targetEl) return;
+      if (targetEl.closest('section[aria-label="Bình chọn đáp án"] button[role="switch"]')) {
+        requestAnimationFrame(render);
+        return;
+      }
+      const optionBtn = targetEl.closest('section[aria-label="Bình chọn đáp án"] [role="group"][aria-label="Các phương án"] button[aria-pressed]');
+      if (!optionBtn) return;
+      if (!question || !state || !state.type || state.busy || state.aiBusy) return;
+      if (!isSlideSynced(ctx, question)) return;
+      if (!state.baselinePoll) {
+        captureBaseline(state, true);
+      }
+      const letter = parsePollOptionLetter(optionBtn);
+      if (!letter) return;
+      if (examMode.active) {
+        if (state.type === 'single') {
+          state.selected = state.selected === letter ? '' : letter;
+        } else if (letter.length === 1) {
+          state.selected = state.selected.includes(letter)
+            ? state.selected.replace(letter, '') : normalize(state.selected + letter);
+        } else {
+          state.selected = state.selected === letter ? '' : letter;
+        }
+        if (state.selected) examMode.answers.set(question.key, state.selected);
+        else examMode.answers.delete(question.key);
+        render();
+        return;
+      }
+      if (state.answer) return;
+      const livePoll = readPollData(ctx.sidebar, false);
+      const isMulti = state.type === 'multiple' || Boolean(livePoll?.multiSwitchOn);
+      state.retrying = false;
+      if (!isMulti) {
+        state.selected = letter;
+        grade();
+      } else {
+        if (letter.length === 1) {
+          state.selected = state.selected.includes(letter)
+            ? state.selected.replace(letter, '')
+            : normalize(state.selected + letter);
+        } else {
+          state.selected = state.selected === letter ? '' : letter;
+        }
+        render();
+      }
+    }, true);
+
     panel.hidden = true;
-    options.append(...buttons);
-    panel.append(title, examBar, examSummary, reviewBar, progressBox, options, submit, retry, reset, comments, ai, aiSettings, star, exportButton, backupButton, examButton, status, distribution, aiResult);
-    sidebar.prepend(panel);
+    panel.append(title, examBar, examSummary, reviewBar, progressBox, multiHint, submit, retry, reset, commentsBtn, ai, aiSettings, star, exportButton, backupButton, examButton, status, aiResult);
+    attachPanel();
 
     function onQuizKeyDown(event) {
       if (!panel.isConnected) {
@@ -2925,19 +3510,24 @@
       }
       if (key.length !== 1) return;
       const upper = key.toUpperCase();
+      const pollOpts = readPollData(ctx.sidebar, false)?.options || [];
       const letterIdx = letters.indexOf(upper);
-      if (letterIdx !== -1 && !buttons[letterIdx].disabled) {
-        event.preventDefault();
-        buttons[letterIdx].click();
-        return;
-      }
-      if (upper >= '1' && upper <= '8') {
-        const idx = Number(upper) - 1;
-        if (!buttons[idx].disabled) {
+      const canChoose = Boolean(state.type && !state.busy && !state.aiBusy && (examMode.active || !state.answer));
+      if (letterIdx !== -1 && canChoose) {
+        const match = pollOpts.find(o => o.key === upper) || pollOpts[letterIdx];
+        if (match && !match.button.disabled) {
           event.preventDefault();
-          buttons[idx].click();
+          match.button.click();
+          return;
         }
-        return;
+      }
+      if (upper >= '1' && upper <= '8' && canChoose) {
+        const idx = Number(upper) - 1;
+        if (pollOpts[idx] && !pollOpts[idx].button.disabled) {
+          event.preventDefault();
+          pollOpts[idx].button.click();
+          return;
+        }
       }
       if (upper === 'R' && !reset.disabled) {
         event.preventDefault();
@@ -2945,10 +3535,10 @@
       } else if (upper === 'S') {
         event.preventDefault();
         star.click();
-      } else if (upper === 'M' || (upper === 'C' && buttons[2].disabled)) {
+      } else if (upper === 'M' && !commentsBtn.disabled) {
         event.preventDefault();
-        comments.click();
-      } else if ((upper === 'I' || (upper === 'E' && buttons[4].disabled)) && !ai.disabled) {
+        commentsBtn.click();
+      } else if ((upper === 'I' || (upper === 'E' && pollOpts.length < 5)) && !ai.disabled) {
         event.preventDefault();
         ai.click();
       }
@@ -2956,7 +3546,7 @@
     document.addEventListener('keydown', onQuizKeyDown);
 
     function onAIConfigChange() {
-      if (!panel.isConnected) {
+      if (!ctx.sidebar.isConnected) {
         aiConfigListeners.delete(onAIConfigChange);
         return;
       }
@@ -2969,22 +3559,38 @@
       render();
     }
     aiConfigListeners.add(onAIConfigChange);
+
     return () => {
-      const next = currentQuestion(root);
-      if (next) discoverQuestions(next);
+      const next = currentQuestion(ctx);
+      if (next?.exam) activeExamInfo = next.exam;
+      if (next) discoverQuestions(ctx, next);
       if (question?.key === next?.key) {
-        const content = sidebar.querySelector('.fancybox-sidebar-content');
-        const visible = Boolean(showComments && question &&
-          content?.querySelector('.xfmgInfoBlock-title h2')?.textContent.trim() === question.title);
-        content?.classList.toggle('fuo-comments-visible', visible);
-        renderProgress();
+        refreshAsyncBaseline();
+        render();
         return;
       }
       question = next;
-      showComments = false;
-      syncComments();
       if (question && !attempts.has(question.key)) {
-        attempts.set(question.key, { selected: '', answer: '', message: '', busy: false, aiBusy: false, aiText: '', aiSolution: null, aiPending: null, aiConfigSig: '', aiPendingSig: '', answerOrigin: '', type: '', typeError: false, votes: [] });
+        attempts.set(question.key, {
+          selected: '',
+          answer: '',
+          message: '',
+          busy: false,
+          aiBusy: false,
+          aiText: '',
+          aiSolution: null,
+          aiPending: null,
+          aiConfigSig: '',
+          aiPendingSig: '',
+          answerOrigin: '',
+          type: '',
+          typeError: false,
+          revealed: false,
+          retrying: false,
+          baselinePoll: null,
+          fuoAi: null,
+          humanVotes: []
+        });
       }
       state = question ? attempts.get(question.key) : null;
       render();
@@ -2999,14 +3605,25 @@
     pending = true;
     requestAnimationFrame(() => {
       pending = false;
-      for (const root of document.querySelectorAll('.fancybox__container')) {
-        const sidebar = root.querySelector('.fancybox-sidebar');
-        if (!sidebar) continue;
-        if (!sidebars.has(sidebar)) sidebars.set(sidebar, mount(root, sidebar));
-        sidebars.get(sidebar)();
+      for (const ctx of findActiveContainers()) {
+        if (!sidebars.has(ctx.sidebar)) sidebars.set(ctx.sidebar, mount(ctx));
+        sidebars.get(ctx.sidebar)();
       }
     });
   }
+
+  for (const method of ['pushState', 'replaceState']) {
+    const orig = history[method];
+    if (typeof orig === 'function') {
+      history[method] = function (...args) {
+        const res = orig.apply(this, args);
+        schedule();
+        return res;
+      };
+    }
+  }
+  window.addEventListener('popstate', schedule);
+
   // Ignore mutations caused by our own panel/dialogs to avoid a render feedback loop.
   const isOwnNode = node => {
     const el = node instanceof Element ? node : node?.parentElement;
@@ -3016,7 +3633,10 @@
     if (records.every(r => isOwnNode(r.target))) return;
     schedule();
   }).observe(document, {
-    subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'src', 'href', 'data-caption', 'alt']
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['class', 'src', 'href', 'alt', 'aria-pressed', 'aria-checked', 'aria-busy', 'aria-current', 'aria-label', 'open']
   });
   window.addEventListener('resize', schedule);
   schedule();
